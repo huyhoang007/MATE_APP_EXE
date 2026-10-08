@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "118328952201",
+    "project_id": "mateapp-8d44d",
+    "storage_bucket": "mateapp-8d44d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:118328952201:android:5239faca53d98d5845cd58",
+        "android_client_info": {
+          "package_name": "com.mate.app.mate_couple_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDm5mdSdxMjhIVU28m0z_ey_63fnXy_6wE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
