@@ -1,15 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../constants/mate_theme.dart';
-import '../widgets/mate_card.dart';
-import '../widgets/mate_cloud.dart';
+import 'mate_card.dart';
+import 'mate_cloud.dart';
 
 /// ============================================================
-/// MemoriesScreen (placeholder) - Timeline nhật ký ảnh
+/// PlaceholderTab - UI dùng chung cho các tab đang phát triển.
 /// ============================================================
 
-class MemoriesScreen extends StatelessWidget {
-  const MemoriesScreen({super.key});
+class PlaceholderTab extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final String placeholderTitle;
+  final String placeholderSubtitle;
+
+  const PlaceholderTab({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.placeholderTitle,
+    required this.placeholderSubtitle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -17,8 +30,8 @@ class MemoriesScreen extends StatelessWidget {
       decoration: const BoxDecoration(gradient: MateColors.bgGradient),
       child: Stack(
         children: [
-          const Positioned(right: -40, top: 120, child: MateCloud(size: 130)),
-          const Positioned(left: -30, bottom: 120, child: MateCloud(size: 170)),
+          const Positioned(left: -30, top: 80, child: MateCloud(size: 140)),
+          const Positioned(right: -40, bottom: 100, child: MateCloud(size: 160)),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -26,17 +39,18 @@ class MemoriesScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Kỷ niệm',
+                    title,
                     style: GoogleFonts.beVietnamPro(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w800,
+                      fontSize: 26, fontWeight: FontWeight.w800,
                       color: MateColors.plum,
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    'Nhật ký hành trình yêu thương của hai bạn',
-                    style: TextStyle(color: MateColors.rose, fontSize: 13),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: MateColors.rose, fontSize: 13,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   Expanded(
@@ -46,30 +60,29 @@ class MemoriesScreen extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            width: 120,
-                            height: 120,
-                            decoration: BoxDecoration(
+                            width: 120, height: 120,
+                            decoration: const BoxDecoration(
                               shape: BoxShape.circle,
                               gradient: MateColors.primaryGradient,
                             ),
                             alignment: Alignment.center,
-                            child: const Icon(Icons.photo_library,
-                                color: Colors.white, size: 60),
+                            child: Icon(icon, color: Colors.white, size: 60),
                           ),
                           const SizedBox(height: 16),
-                          const Text(
-                            '📸 Sắp ra mắt',
-                            style: TextStyle(
-                              color: MateColors.plum,
-                              fontSize: 18,
+                          Text(
+                            placeholderTitle,
+                            style: const TextStyle(
+                              color: MateColors.plum, fontSize: 18,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
                           const SizedBox(height: 8),
-                          const Text(
-                            'Timeline ảnh & nhật ký chung sẽ có trong phiên bản tiếp theo',
+                          Text(
+                            placeholderSubtitle,
                             textAlign: TextAlign.center,
-                            style: TextStyle(color: MateColors.rose, fontSize: 13),
+                            style: const TextStyle(
+                              color: MateColors.rose, fontSize: 13,
+                            ),
                           ),
                         ],
                       ),
