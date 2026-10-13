@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../constants/mate_theme.dart';
+import '../models/couple_model.dart';
 import 'tabs/map_tab.dart';
 import 'tabs/pet_tab.dart';
 import 'tabs/memories_tab.dart';
@@ -43,9 +44,13 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
           .doc(widget.coupleId)
           .snapshots(),
       builder: (context, snap) {
-        final data = snap.data?.data() ?? <String, dynamic>{};
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-        // Tính số ngày bên nhau từ startDate.
+        final coupleDoc = snap.data!;
+        final data = coupleDoc.data() ?? <String, dynamic>{};
+
         int daysTogether = 0;
         final sd = data['startDate'];
         if (sd != null) {
@@ -54,12 +59,7 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
             daysTogether = DateTime.now().difference(start).inDays.clamp(0, 99999);
           }
         }
-        final coupleData = <String, dynamic>{
-          'user1': data['user1'],
-          'user2': data['user2'],
-          'daysTogether': daysTogether,
-          'isPremium': data['isPremium'] ?? false,
-        };
+        final coupleData = CoupleData.fromDoc(coupleDoc);
 
         final tabs = <Widget>[
           MapTab(
@@ -68,7 +68,11 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
             coupleData: coupleData,
           ),
           const PetTab(),
-          const MemoriesTab(),
+          MemoriesTab(
+            coupleId: widget.coupleId,
+            currentUserId: widget.currentUserId,
+            coupleData: coupleData,
+          ),
           const ChatTab(),
           const ProfileTab(),
         ];

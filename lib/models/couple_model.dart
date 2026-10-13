@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:latlong2/latlong.dart';
 import 'dart:math' as math;
 
 /// ============================================================
@@ -35,6 +36,8 @@ class GeoLocation {
   }
 
   Map<String, dynamic> toMap() => {'lat': lat, 'lng': lng};
+
+  LatLng toLatLng() => LatLng(lat, lng);
 
   bool get isValid => lat != 0 && lng != 0;
 

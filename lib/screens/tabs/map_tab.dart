@@ -3,11 +3,12 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../models/couple_model.dart';
 
 class MapTab extends StatefulWidget {
   final String coupleId;
   final String currentUserId;
-  final Map<String, dynamic> coupleData;
+  final CoupleData? coupleData;
 
   const MapTab({
     super.key,
@@ -43,13 +44,13 @@ class _MapTabState extends State<MapTab> {
         });
         _mapController.move(_myLocation, 14.5);
 
-        // Đẩy vị trí lên Firestore
+        // Đẩy vị trí lên Firestore - ghi vào user1 (current device)
         await FirebaseFirestore.instance.collection('couples').doc(widget.coupleId).update({
-          '${widget.currentUserId}.location': {
+          'user1.location': {
             'lat': pos.latitude,
             'lng': pos.longitude,
           },
-          '${widget.currentUserId}.stayMinutes': 0,
+          'user1.lastActive': FieldValue.serverTimestamp(),
         });
       }
     } catch (e) {
@@ -63,14 +64,13 @@ class _MapTabState extends State<MapTab> {
 
   @override
   Widget build(BuildContext context) {
-    final u1 = widget.coupleData['user1'] as Map<String, dynamic>? ?? {};
-    final u2 = widget.coupleData['user2'] as Map<String, dynamic>? ?? {};
+    final u1 = widget.coupleData?.user1 ?? const UserInfo(name: 'Bạn 1');
+    final u2 = widget.coupleData?.user2 ?? const UserInfo(name: 'Bạn 2');
 
-    final loc1 = u1['location'] as Map<String, dynamic>?;
-    final loc2 = u2['location'] as Map<String, dynamic>?;
-
-    final pos1 = loc1 != null ? LatLng(loc1['lat'], loc1['lng']) : _myLocation;
-    final pos2 = loc2 != null ? LatLng(loc2['lat'], loc2['lng']) : LatLng(_myLocation.latitude + 0.02, _myLocation.longitude + 0.02);
+    final loc1 = u1.location;
+    final loc2 = u2.location;
+    final pos1 = loc1.isValid ? LatLng(loc1.lat, loc1.lng) : _myLocation;
+    final pos2 = loc2.isValid ? LatLng(loc2.lat, loc2.lng) : LatLng(_myLocation.latitude + 0.02, _myLocation.longitude + 0.02);
 
     final distanceKm = _calculateDistance(pos1, pos2);
 
@@ -87,9 +87,9 @@ class _MapTabState extends State<MapTab> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
-                  subdomains: const ['a', 'b', 'c', 'd'],
+                  urlTemplate: 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png',
                   maxZoom: 20,
+                  userAgentPackageName: 'com.mateapp.app',
                 ),
                 PolylineLayer(
                   polylines: [
@@ -108,14 +108,14 @@ class _MapTabState extends State<MapTab> {
                       point: pos1,
                       width: 90,
                       height: 90,
-                      child: _buildAvatarMarker(u1['name'] ?? 'A', u1['stayMinutes'] ?? 0, Colors.pinkAccent),
+                      child: _buildAvatarMarker(u1.name, u1.stayMinutes ?? 0, Colors.pinkAccent),
                     ),
                     // Marker User 2
                     Marker(
                       point: pos2,
                       width: 90,
                       height: 90,
-                      child: _buildAvatarMarker(u2['name'] ?? 'B', u2['stayMinutes'] ?? 0, Colors.lightBlue),
+                      child: _buildAvatarMarker(u2.name, u2.stayMinutes ?? 0, Colors.lightBlue),
                     ),
                     // Badge Khoảng cách giữa 2 người
                     Marker(
@@ -166,7 +166,7 @@ class _MapTabState extends State<MapTab> {
                         const Icon(Icons.favorite, color: Colors.pinkAccent, size: 18),
                         const SizedBox(width: 6),
                         Text(
-                          "Bên nhau ${widget.coupleData['daysTogether'] ?? 2392} bầu trời 💕",
+                          "Bên nhau ${widget.coupleData?.daysLoved ?? 2392} bầu trời 💕",
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                         ),
                       ],
