@@ -4,17 +4,27 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/couple_model.dart';
+import '../games/games_list_screen.dart';
+import '../utilities/utilities_home_screen.dart';
+import '../../services/notification_service.dart';
+import '../../services/map_preferences_service.dart';
+import '../../widgets/notification_center_sheet.dart';
+import '../../widgets/map_settings_sheet.dart';
 
 class MapTab extends StatefulWidget {
   final String coupleId;
   final String currentUserId;
   final CoupleData? coupleData;
+  // Callback yeu cau MainWrapper chuyen sang tab co index tuong ung.
+  // Dung cho cac tien ich tren Map (vi du Khoanh khac -> Tab 3 = index 2).
+  final ValueChanged<int>? onChangeTab;
 
   const MapTab({
     super.key,
     required this.coupleId,
     required this.currentUserId,
     required this.coupleData,
+    this.onChangeTab,
   });
 
   @override
@@ -25,36 +35,78 @@ class _MapTabState extends State<MapTab> {
   final MapController _mapController = MapController();
   LatLng _myLocation = const LatLng(10.8231, 106.6297); // Tọa độ mặc định TP.HCM
 
+  // Trạng thái quyền / dịch vụ vị trí — dùng cho Map Settings Sheet.
+  LocationPermission _locationPermission = LocationPermission.denied;
+  bool _locationServiceEnabled = false;
+
   @override
   void initState() {
     super.initState();
     _determinePosition();
+    // Seed notification mock data một lần khi tab được mở lần đầu.
+    NotificationService.instance.ensureSeeded();
+    // Load persisted map preferences (light/dark, toggles).
+    MapPreferencesService.instance.ensureLoaded();
   }
 
-  Future<void> _determinePosition() async {
+  /// Lấy vị trí hiện tại + đẩy lên Firestore. Trả về true nếu thành
+  /// công, false nếu thất bại (quyền bị từ chối, GPS tắt, exception).
+  /// Map Settings Sheet gọi hàm này khi nhấn "Làm mới vị trí".
+  Future<bool> refreshLocation() => _determinePosition();
+
+  Future<bool> _determinePosition() async {
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!mounted) return false;
+      setState(() => _locationServiceEnabled = enabled);
+      if (!enabled) return false;
+
+      var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
-        Position pos = await Geolocator.getCurrentPosition();
+      if (!mounted) return false;
+      setState(() => _locationPermission = permission);
+
+      if (permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always) {
+        final pos = await Geolocator.getCurrentPosition();
+        if (!mounted) return false;
         setState(() {
           _myLocation = LatLng(pos.latitude, pos.longitude);
         });
+        // Cố gắng move map — không làm reset nếu user đang xem
+        // vị trí khác. Comment gốc dùng move; giữ nguyên behavior.
         _mapController.move(_myLocation, 14.5);
 
-        // Đẩy vị trí lên Firestore - ghi vào user1 (current device)
-        await FirebaseFirestore.instance.collection('couples').doc(widget.coupleId).update({
-          'user1.location': {
-            'lat': pos.latitude,
-            'lng': pos.longitude,
-          },
-          'user1.lastActive': FieldValue.serverTimestamp(),
-        });
+        // Đẩy vị trí lên Firestore - ghi vào user1 (current device).
+        try {
+          await FirebaseFirestore.instance
+              .collection('couples')
+              .doc(widget.coupleId)
+              .update({
+            'user1.location': {
+              'lat': pos.latitude,
+              'lng': pos.longitude,
+            },
+            'user1.lastActive': FieldValue.serverTimestamp(),
+          });
+        } catch (e) {
+          // Ghi Firestore lỗi không chặn việc cập nhật UI.
+          debugPrint("Lỗi ghi Firestore: $e");
+          return false;
+        }
+        return true;
       }
+      return false;
     } catch (e) {
       debugPrint("Lỗi lấy vị trí: $e");
+      if (mounted) {
+        setState(() {
+          _locationServiceEnabled = false;
+        });
+      }
+      return false;
     }
   }
 
@@ -75,8 +127,35 @@ class _MapTabState extends State<MapTab> {
     final distanceKm = _calculateDistance(pos1, pos2);
 
     return Scaffold(
-      body: Stack(
-        children: [
+      body: AnimatedBuilder(
+        animation: MapPreferencesService.instance,
+        builder: (context, _) {
+          final prefs = MapPreferencesService.instance;
+          return _buildBody(
+            context: context,
+            u1: u1,
+            u2: u2,
+            pos1: pos1,
+            pos2: pos2,
+            distanceKm: distanceKm,
+            prefs: prefs,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildBody({
+    required BuildContext context,
+    required UserInfo u1,
+    required UserInfo u2,
+    required LatLng pos1,
+    required LatLng pos2,
+    required double distanceKm,
+    required MapPreferencesService prefs,
+  }) {
+    return Stack(
+      children: [
           // 1. LAYER BẢN ĐỒ THẬT NỀN TOÀN MÀN HÌNH
           Positioned.fill(
             child: FlutterMap(
@@ -87,56 +166,62 @@ class _MapTabState extends State<MapTab> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png',
+                  urlTemplate: prefs.tileUrl,
                   maxZoom: 20,
                   userAgentPackageName: 'com.mateapp.app',
                 ),
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: [pos1, pos2],
-                      color: const Color(0xFFC084FC),
-                      strokeWidth: 3.5,
-                      pattern: StrokePattern.dashed(segments: const [8, 8]),
-                    ),
-                  ],
-                ),
+                // Đường kết nối 2 vị trí
+                if (prefs.showConnectionLine)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: [pos1, pos2],
+                        color: const Color(0xFFC084FC),
+                        strokeWidth: 3.5,
+                        pattern: StrokePattern.dashed(segments: const [8, 8]),
+                      ),
+                    ],
+                  ),
+                // Marker 2 người + badge khoảng cách
                 MarkerLayer(
                   markers: [
-                    // Marker User 1
-                    Marker(
-                      point: pos1,
-                      width: 90,
-                      height: 90,
-                      child: _buildAvatarMarker(u1.name, u1.stayMinutes ?? 0, Colors.pinkAccent),
-                    ),
-                    // Marker User 2
-                    Marker(
-                      point: pos2,
-                      width: 90,
-                      height: 90,
-                      child: _buildAvatarMarker(u2.name, u2.stayMinutes ?? 0, Colors.lightBlue),
-                    ),
+                    if (prefs.showBothMarkers) ...[
+                      // Marker User 1
+                      Marker(
+                        point: pos1,
+                        width: 90,
+                        height: 90,
+                        child: _buildAvatarMarker(u1.name, u1.stayMinutes ?? 0, Colors.pinkAccent),
+                      ),
+                      // Marker User 2
+                      Marker(
+                        point: pos2,
+                        width: 90,
+                        height: 90,
+                        child: _buildAvatarMarker(u2.name, u2.stayMinutes ?? 0, Colors.lightBlue),
+                      ),
+                    ],
                     // Badge Khoảng cách giữa 2 người
-                    Marker(
-                      point: LatLng((pos1.latitude + pos2.latitude) / 2, (pos1.longitude + pos2.longitude) / 2),
-                      width: 100,
-                      height: 36,
-                      child: Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFC084FC),
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
-                          ),
-                          child: Text(
-                            "${distanceKm.toStringAsFixed(1)} km",
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    if (prefs.showDistanceBadge)
+                      Marker(
+                        point: LatLng((pos1.latitude + pos2.latitude) / 2, (pos1.longitude + pos2.longitude) / 2),
+                        width: 100,
+                        height: 36,
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFC084FC),
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                            ),
+                            child: Text(
+                              "${distanceKm.toStringAsFixed(1)} km",
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                            ),
                           ),
                         ),
                       ),
-                    ),
                   ],
                 ),
               ],
@@ -152,7 +237,18 @@ class _MapTabState extends State<MapTab> {
                 children: [
                   CircleAvatar(
                     backgroundColor: Colors.white,
-                    child: IconButton(icon: const Icon(Icons.settings, color: Colors.black87), onPressed: () {}),
+                    child: IconButton(
+                      icon: const Icon(Icons.settings, color: Colors.black87),
+                      tooltip: 'Cài đặt bản đồ',
+                      onPressed: () {
+                        MapSettingsSheet.show(
+                          context,
+                          onRefreshLocation: refreshLocation,
+                          locationPermission: _locationPermission,
+                          locationServiceEnabled: _locationServiceEnabled,
+                        );
+                      },
+                    ),
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -172,9 +268,37 @@ class _MapTabState extends State<MapTab> {
                       ],
                     ),
                   ),
-                  CircleAvatar(
-                    backgroundColor: Colors.white,
-                    child: IconButton(icon: const Icon(Icons.notifications_none, color: Colors.black87), onPressed: () {}),
+                  // Icon chuông + badge chưa đọc
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.white,
+                        child: IconButton(
+                          icon: const Icon(Icons.notifications_none, color: Colors.black87),
+                          tooltip: 'Thông báo',
+                          onPressed: () {
+                            NotificationCenterSheet.show(
+                              context,
+                              onChangeTab: widget.onChangeTab,
+                            );
+                          },
+                        ),
+                      ),
+                      // Badge chưa đọc — rebuild theo NotificationService
+                      Positioned(
+                        top: -2,
+                        right: -2,
+                        child: AnimatedBuilder(
+                          animation: NotificationService.instance,
+                          builder: (context, _) {
+                            final unread = NotificationService.instance.unreadCount;
+                            if (unread == 0) return const SizedBox.shrink();
+                            return _UnreadBadge(count: unread);
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -246,9 +370,9 @@ class _MapTabState extends State<MapTab> {
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
                         _buildAction(Icons.location_on, "Vị trí", const Color(0xFFCCFBF1), const Color(0xFF0D9488)),
-                        _buildAction(Icons.auto_stories, "Khoảnh khắc", const Color(0xFFFCE7F3), const Color(0xFFE11D48)),
-                        _buildAction(Icons.videogame_asset, "Chơi", const Color(0xFFF3E8FF), const Color(0xFF9333EA)),
-                        _buildAction(Icons.widgets, "Tiện ích", const Color(0xFFFEF9C3), const Color(0xFFD97706)),
+                        _buildAction(Icons.auto_stories, "Khoảnh khắc", const Color(0xFFFCE7F3), const Color(0xFFE11D48), onTap: () { widget.onChangeTab?.call(2); }),
+                        _buildAction(Icons.videogame_asset, "Chơi", const Color(0xFFF3E8FF), const Color(0xFF9333EA), onTap: () { Navigator.of(context).push(MaterialPageRoute(builder: (_) => const GamesListScreen())); }),
+                        _buildAction(Icons.widgets, "Tiện ích", const Color(0xFFFEF9C3), const Color(0xFFD97706), onTap: () { Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UtilitiesHomeScreen())); }),
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -278,8 +402,7 @@ class _MapTabState extends State<MapTab> {
             },
           ),
         ],
-      ),
-    );
+      );
   }
 
   Widget _buildAvatarMarker(String name, int stayMins, Color color) {
@@ -297,8 +420,9 @@ class _MapTabState extends State<MapTab> {
     );
   }
 
-  Widget _buildAction(IconData icon, String label, Color bg, Color iconColor) {
-    return Column(
+  Widget _buildAction(IconData icon, String label, Color bg, Color iconColor, {VoidCallback? onTap}) {
+    final col = Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           padding: const EdgeInsets.all(14),
@@ -308,6 +432,50 @@ class _MapTabState extends State<MapTab> {
         const SizedBox(height: 6),
         Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
       ],
+    );
+    if (onTap == null) return col;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: col,
+    );
+  }
+}
+
+// =============================================================
+// _UnreadBadge - Badge số thông báo chưa đọc (nổi trên chuông)
+// Ẩn khi count = 0. Tự rebuild khi NotificationService thay đổi
+// nhờ AnimatedBuilder bọc ngoài tại vị trí gọi.
+// =============================================================
+class _UnreadBadge extends StatelessWidget {
+  final int count;
+  const _UnreadBadge({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = count > 99 ? '99+' : '$count';
+    return Container(
+      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF3B69),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white, width: 1.5),
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 1)),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          height: 1.1,
+        ),
+      ),
     );
   }
 }

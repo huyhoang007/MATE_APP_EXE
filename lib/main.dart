@@ -6,6 +6,7 @@ import 'screens/main_wrapper_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'services/user_id_service.dart';
 import 'constants/mate_theme.dart';
+import 'widgets/mobile_frame.dart';
 
 /// ============================================================
 /// MATE - Không Gian Đôi
@@ -38,6 +39,15 @@ class MateApp extends StatelessWidget {
           secondary: MateColors.rose,
         ),
       ),
+      // MobileFrame bọc mọi page trong root Navigator, đảm bảo cả các
+      // màn hình push (như Games) đều nằm trong khung mobile 430px
+      // khi chạy trên web/desktop, thay vì tràn full-width.
+      builder: (context, child) {
+        return MobileFrame(
+          background: const Color(0xFFFCE4EC),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const _Gate(),
     );
   }

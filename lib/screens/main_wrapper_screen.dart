@@ -66,6 +66,12 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
             coupleId: widget.coupleId,
             currentUserId: widget.currentUserId,
             coupleData: coupleData,
+            // Tien ich "Khoanh khac" tren Map se goi callback nay de
+            // chuyen sang Tab 3 (index 2) qua cung co che setState(_index).
+            onChangeTab: (i) {
+              if (!mounted) return;
+              setState(() => _index = i);
+            },
           ),
           const PetTab(),
           MemoriesTab(
@@ -73,70 +79,50 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
             currentUserId: widget.currentUserId,
             coupleData: coupleData,
           ),
-          const ChatTab(),
-          const ProfileTab(),
+          // Tab 4 (Nhắn tin): khi được chọn, Bottom Navigation sẽ
+          // được ẩn hoàn toàn để Message Input Bar chiếm vị trí đó.
+          // Nhấn Back (trên Header hoặc Android system back) sẽ
+          // quay về Tab 1 – Bản đồ.
+          ChatTab(
+            onBack: () {
+              if (!mounted) return;
+              setState(() => _index = 0);
+            },
+          ),
+          // Tab 5: Hồ sơ cặp đôi — truyền cùng dữ liệu với MapTab/MemoriesTab
+          // để hiển thị 2 avatar, thống kê và dòng thời gian thực tế.
+          ProfileTab(
+            coupleId: widget.coupleId,
+            currentUserId: widget.currentUserId,
+            coupleData: coupleData,
+          ),
         ];
 
-        return _ResponsiveFrame(
-          background: const Color(0xFFFCE4EC),
-          child: Scaffold(
-            extendBody: true,
-            body: IndexedStack(index: _index, children: tabs),
-            bottomNavigationBar: _FloatingDock(
-              currentIndex: _index,
-              onTap: (i) => setState(() => _index = i),
-            ),
-          ),
+        // Ẩn Bottom Navigation khi đang ở Tab Nhắn tin (index == 3).
+        final bool showDock = _index != 3;
+
+        // MobileFrame đã bọc ở MaterialApp.builder (main.dart), nên ở đây
+        // chỉ cần Scaffold thường — mọi tab và mọi route push (Games, ...)
+        // đều nằm trong cùng khung mobile 430px.
+        return Scaffold(
+          backgroundColor: const Color(0xFFFCE4EC),
+          extendBody: true,
+          body: IndexedStack(index: _index, children: tabs),
+          // Truyền null khi ở tab Chat để Scaffold không render dock,
+          // đồng thời tự động dồn body lên tận đáy (vẫn giữ
+          // resizeToAvoidBottomInset mặc định = true).
+          bottomNavigationBar: showDock
+              ? _FloatingDock(
+                  currentIndex: _index,
+                  onTap: (i) => setState(() => _index = i),
+                )
+              : null,
         );
       },
     );
   }
 }
 
-// =============================================================
-// Responsive Frame — max-width 430px, canh giữa trên web
-// =============================================================
-
-class _ResponsiveFrame extends StatelessWidget {
-  final Widget child;
-  final Color background;
-  const _ResponsiveFrame({required this.child, required this.background});
-
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final isWide = size.width > kMobileMaxWidth + 32;
-
-    if (!isWide) {
-      return Container(color: background, child: child);
-    }
-
-    return Container(
-      color: background,
-      alignment: Alignment.center,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: kMobileMaxWidth),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(36),
-            child: Container(
-              decoration: BoxDecoration(
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.18),
-                    blurRadius: 60,
-                    offset: const Offset(0, 20),
-                  ),
-                ],
-              ),
-              child: child,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // =============================================================
 // Floating Dock — 5 icon bottom nav
