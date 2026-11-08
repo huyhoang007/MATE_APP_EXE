@@ -1,0 +1,65 @@
+rules_version = '2';
+
+// ============================================================
+// MATE - Cloud Storage Security Rules
+// ============================================================
+//
+// Cấu trúc bucket:
+//   avatars/{coupleId}/{uid}.jpg          - avatar của 2 thành viên
+//   moments/{coupleId}/{momentId}.jpg     - khoảnh khắc / ảnh kỷ niệm
+//   chat/{coupleId}/{messageId}.jpg       - ảnh trong tin nhắn
+//   diaries/{coupleId}/{dateKey}.jpg      - ảnh nhật ký trong ngày
+//
+// Quy tắc: chỉ 2 thành viên trong `couples/{coupleId}/members` được
+// đọc/ghi. Người ngoài cặp đôi không truy cập được.
+// ============================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Kiểm tra user hiện tại có phải thành viên của cặp đôi hay không.
+    // (Đọc Firestore từ Storage rules là được hỗ trợ.)
+    function isMember(coupleId) {
+      return request.auth != null
+        && firestore.get(/databases/(default)/documents/couples/$(coupleId)/members/$(request.auth.uid)).exists();
+    }
+
+    function isValidImage() {
+      return request.resource != null
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ---------- Avatar ----------
+    match /avatars/{coupleId}/{uid}.jpg {
+      allow read: if isMember(coupleId);
+      // Chỉ upload avatar của chính mình.
+      allow write: if isMember(coupleId)
+                   && request.auth.uid == uid
+                   && isValidImage();
+    }
+
+    // ---------- Khoảnh khắc ----------
+    match /moments/{coupleId}/{momentId}.jpg {
+      allow read: if isMember(coupleId);
+      allow write: if isMember(coupleId) && isValidImage();
+    }
+
+    // ---------- Ảnh tin nhắn ----------
+    match /chat/{coupleId}/{messageId}.jpg {
+      allow read: if isMember(coupleId);
+      allow write: if isMember(coupleId) && isValidImage();
+    }
+
+    // ---------- Ảnh nhật ký ----------
+    match /diaries/{coupleId}/{dateKey}.jpg {
+      allow read: if isMember(coupleId);
+      allow write: if isMember(coupleId) && isValidImage();
+    }
+
+    // Mọi thứ khác: chặn.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

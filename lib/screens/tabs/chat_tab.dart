@@ -1,34 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../constants/mate_theme.dart';
+import '../../models/couple_model.dart';
+import '../../services/auth_service.dart';
+import '../../services/chat_service.dart';
 import '../../widgets/mate_cloud.dart';
 
 /// ============================================================
 /// ChatTab - Tab 4: Nhắn tin (Couple Messenger UI)
 ///
-/// Bố cục gồm:
-///   - Header: avatar người yêu, tên, online, % pin, menu.
-///   - Chat area: bubble 2 phía, ngày, thời gian. Mình = hồng,
-///     người yêu = trắng.
-///   - Activity notifications: card vị trí / check-in nằm giữa
-///     cuộc trò chuyện.
-///   - Message Input Bar: pill style (Messenger-like) với
-///     + / ảnh / sticker ở trái, ô nhập pill ở giữa có icon
-///     emoji bên trong, nút mic / send ở phải — luôn cố định
-///     ở cuối màn hình, ngay trên Bottom Navigation.
-///   - Bottom nav: giữ ở main_wrapper (không chỉnh sửa).
-///
-/// CHÚ Ý:
-///   - Dữ liệu trong đây là SAMPLE để hiển thị giao diện.
-///   - Chỉ thay đổi phần UI; KHÔNG đụng backend / Firestore / nav.
+/// Kết nối realtime với Firestore qua ChatService:
+///   - Collection: couples/{coupleId}/messages/{messageId}
+///   - Gửi / nhận tin nhắn văn bản, ảnh, activity realtime.
+///   - Đánh dấu đã đọc qua ChatService.markAllRead().
 /// ============================================================
 
 class ChatTab extends StatefulWidget {
-  /// Callback khi người dùng nhấn nút Back trên Header hoặc
-  /// thao tác Android system back. Thường dùng để chuyển về Tab 1.
+  final String? coupleId;
+  final String? currentUserId;
+  final CoupleData? coupleData;
+
+  /// Callback khi người dùng nhấn nút Back trên Header.
   final VoidCallback? onBack;
 
-  const ChatTab({super.key, this.onBack});
+  const ChatTab({
+    super.key,
+    this.coupleId,
+    this.currentUserId,
+    this.coupleData,
+    this.onBack,
+  });
 
   @override
   State<ChatTab> createState() => _ChatTabState();
@@ -38,102 +39,23 @@ class _ChatTabState extends State<ChatTab> {
   final TextEditingController _msgCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _focusNode = FocusNode();
+  bool _isSending = false;
 
-  // Mock data các tin nhắn theo cấu trúc ngày (read-only showcase).
-  final List<_DaySection> _days = const [
-    _DaySection(
-      label: 'Hôm nay',
-      items: [
-        _Bubble(
-          side: _BubbleSide.them,
-          text: 'Dậy chưa em? Anh nhớ em quá 💕',
-          time: '09:12',
-        ),
-        _Bubble(
-          side: _BubbleSide.me,
-          text: 'Mới dậy nè, vừa đánh răng xong á 😴',
-          time: '09:14',
-        ),
-        _Bubble(
-          side: _BubbleSide.them,
-          text: 'Hôm nay anh đi công tác về sớm nha, 5h có mặt ở nhà 🥰',
-          time: '09:16',
-        ),
-        _ActivityCard(
-          icon: Icons.favorite_rounded,
-          iconColor: MateColors.pink,
-          badge: 'CHECK-IN',
-          title: 'Anh yêu đã check-in "Vừa thức dậy"',
-          subtitle: 'Điểm thân mật +5',
-          time: '09:18',
-        ),
-        _Bubble(
-          side: _BubbleSide.me,
-          text: 'Okii anh, em chờ nhé. Hôm nay em nấu cơm chiều cho anh nè 🍚',
-          time: '09:20',
-        ),
-        _Bubble(
-          side: _BubbleSide.them,
-          text: 'Hôm nay ăn gì đặc biệt không em?',
-          time: '09:22',
-        ),
-        _Bubble(
-          side: _BubbleSide.me,
-          text: 'Em làm bún bò cho anh, thơm phức luôn 😘',
-          time: '09:25',
-        ),
-        _ActivityCard(
-          icon: Icons.location_on_rounded,
-          iconColor: MateColors.info,
-          badge: 'VỊ TRÍ',
-          title: 'Em yêu vừa đến "Chợ Bến Thành"',
-          subtitle: 'Cách anh 4.2 km',
-          time: '10:42',
-        ),
-        _Bubble(
-          side: _BubbleSide.them,
-          text: 'Em mua gì vậy? Mua cho anh ổ bánh mì nha 😂',
-          time: '10:45',
-        ),
-        _Bubble(
-          side: _BubbleSide.me,
-          text: 'Mua rồi nè, anh muốn ăn pate hay xíu mại? 🥖',
-          time: '10:48',
-        ),
-        _Bubble(
-          side: _BubbleSide.them,
-          text: 'Pate đi em, nhớ mua thêm ổ nữa nha 😋',
-          time: '10:50',
-        ),
-        _Bubble(
-          side: _BubbleSide.me,
-          text: 'Ok anh, em mua 2 ổ luôn. Yêu anh nhiều 🥰',
-          time: '10:52',
-        ),
-      ],
-    ),
-    _DaySection(
-      label: 'Hôm qua',
-      items: [
-        _Bubble(
-          side: _BubbleSide.them,
-          text: 'Ngủ ngon em nhé, mai mình cùng đi cafe ☕',
-          time: '23:05',
-        ),
-        _Bubble(
-          side: _BubbleSide.me,
-          text: 'Dạ, anh cũng ngủ sớm nha. Yêu anh 🌙',
-          time: '23:08',
-        ),
-      ],
-    ),
-  ];
-
-  // Khoảng đệm dưới cho vùng chat cuộn: chỉ cần chừa chỗ cho
-  // Message Input Bar (đã được Positioned ở đáy Stack). Bottom
-  // Navigation đã được ẩn hoàn toàn khi ở Tab Nhắn tin, nên không
-  // cần trừ thêm chiều cao dock ở đây.
   static const double _inputBarHeight = 64;
+
+  @override
+  void initState() {
+    super.initState();
+    _markRead();
+  }
+
+  void _markRead() {
+    if (widget.coupleId != null) {
+      ChatService.instance.markAllRead(widget.coupleId!).catchError((e) {
+        debugPrint('Error marking messages as read: $e');
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -143,26 +65,59 @@ class _ChatTabState extends State<ChatTab> {
     super.dispose();
   }
 
-  void _onSend() {
-    final text = _msgCtrl.text.trim();
-    if (text.isEmpty) return;
-    // Demo UI: chỉ clear input, không đẩy lên state/backend.
-    setState(() => _msgCtrl.clear());
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
-  // ────────────────────────────────────────────────────────────
-  // Build chính
-  // ────────────────────────────────────────────────────────────
+  Future<void> _onSend() async {
+    final text = _msgCtrl.text.trim();
+    if (text.isEmpty || _isSending) return;
+
+    final coupleId = widget.coupleId;
+    if (coupleId == null) return;
+
+    setState(() {
+      _isSending = true;
+      _msgCtrl.clear();
+    });
+
+    try {
+      final myName = widget.coupleData?.user1.name ?? 'Tôi';
+      await ChatService.instance.sendText(
+        code: coupleId,
+        text: text,
+        senderName: myName,
+      );
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi gửi tin nhắn: $e'),
+            backgroundColor: MateColors.rose,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // PopScope: chặn hành vi back mặc định (pop Navigator / thoát
-    // app) và gọi onBack để MainWrapper chuyển về Tab 1 – Bản đồ.
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         if (widget.onBack != null) {
-          // Ẩn bàn phím trước khi chuyển tab để tránh giật layout.
           FocusScope.of(context).unfocus();
           widget.onBack!();
         }
@@ -171,12 +126,12 @@ class _ChatTabState extends State<ChatTab> {
         decoration: const BoxDecoration(gradient: MateColors.bgGradient),
         child: Stack(
           children: [
-            // Mây trang trí nền — đồng bộ style MATE.
+            // Mây trang trí nền
             const Positioned(left: -40, top: 110, child: MateCloud(size: 150)),
             const Positioned(right: -50, top: 380, child: MateCloud(size: 130)),
             const Positioned(left: -40, bottom: 200, child: MateCloud(size: 160)),
 
-            // ── Vùng chat: Column với header cố định + body cuộn được ──
+            // Vùng chat
             SafeArea(
               bottom: false,
               child: Column(
@@ -184,14 +139,13 @@ class _ChatTabState extends State<ChatTab> {
                   _buildHeader(),
                   const SizedBox(height: 8),
                   Expanded(
-                    child: _buildBody(),
+                    child: _buildMessagesStream(),
                   ),
                 ],
               ),
             ),
 
-            // ── Thanh nhập tin nhắn: cố định ở đáy (thay thế vị trí
-            //    của Bottom Navigation khi ở Tab Nhắn tin) ──
+            // Thanh nhập tin nhắn
             Positioned(
               left: 0,
               right: 0,
@@ -205,9 +159,15 @@ class _ChatTabState extends State<ChatTab> {
   }
 
   // ────────────────────────────────────────────────────────────
-  // Header: Back → Avatar → Tên/Online → Pin → Menu
+  // Header: Partner info từ Firestore
   // ────────────────────────────────────────────────────────────
   Widget _buildHeader() {
+    final partner = widget.coupleData?.user2;
+    final partnerName = partner?.name ?? 'Người yêu';
+    final isOnline = partner?.isOnline ?? false;
+    final battery = partner?.batteryLevel ?? 100;
+    final initial = partnerName.isNotEmpty ? partnerName[0].toUpperCase() : 'M';
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -219,7 +179,6 @@ class _ChatTabState extends State<ChatTab> {
       ),
       child: Row(
         children: [
-          // ── Nút Back (chỉ hiển thị khi có onBack) ──
           if (widget.onBack != null) ...[
             _backButton(),
             const SizedBox(width: 8),
@@ -237,10 +196,10 @@ class _ChatTabState extends State<ChatTab> {
                   gradient: MateColors.heroGradient,
                   boxShadow: MateShadows.avatar,
                 ),
-                child: const Center(
+                child: Center(
                   child: Text(
-                    'M',
-                    style: TextStyle(
+                    initial,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
@@ -255,7 +214,7 @@ class _ChatTabState extends State<ChatTab> {
                   width: 14,
                   height: 14,
                   decoration: BoxDecoration(
-                    color: MateColors.online,
+                    color: isOnline ? MateColors.online : Colors.grey,
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.white, width: 2.5),
                   ),
@@ -272,7 +231,7 @@ class _ChatTabState extends State<ChatTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Minh Anh',
+                  partnerName,
                   style: GoogleFonts.beVietnamPro(
                     color: MateColors.plum,
                     fontSize: 17,
@@ -285,15 +244,15 @@ class _ChatTabState extends State<ChatTab> {
                     Container(
                       width: 8,
                       height: 8,
-                      decoration: const BoxDecoration(
-                        color: MateColors.online,
+                      decoration: BoxDecoration(
+                        color: isOnline ? MateColors.online : Colors.grey,
                         shape: BoxShape.circle,
                       ),
                     ),
                     const SizedBox(width: 6),
-                    const Text(
-                      'Đang hoạt động',
-                      style: TextStyle(
+                    Text(
+                      isOnline ? 'Đang hoạt động' : 'Vừa rời đi',
+                      style: const TextStyle(
                         color: MateColors.rose,
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
@@ -316,15 +275,17 @@ class _ChatTabState extends State<ChatTab> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
-                  Icons.battery_full_rounded,
-                  color: MateColors.pink,
+                Icon(
+                  battery > 20
+                      ? Icons.battery_full_rounded
+                      : Icons.battery_alert_rounded,
+                  color: battery > 20 ? MateColors.pink : MateColors.rose,
                   size: 16,
                 ),
                 const SizedBox(width: 4),
-                const Text(
-                  '78%',
-                  style: TextStyle(
+                Text(
+                  '$battery%',
+                  style: const TextStyle(
                     color: MateColors.plum,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -351,13 +312,11 @@ class _ChatTabState extends State<ChatTab> {
     );
   }
 
-  // Nút Back phong cách MATE — nền hồng pastel, mũi tên hồng đậm.
   Widget _backButton() {
     return Tooltip(
       message: 'Quay lại',
       child: GestureDetector(
         onTap: () {
-          // Ẩn bàn phím trước khi back để tránh giật layout.
           FocusScope.of(context).unfocus();
           widget.onBack?.call();
         },
@@ -382,34 +341,150 @@ class _ChatTabState extends State<ChatTab> {
   }
 
   // ────────────────────────────────────────────────────────────
-  // Body: cuộn các tin nhắn + activity
-  // Padding dưới = chiều cao input bar + khoảng cách + dock,
-  // để nội dung cuối không bị thanh nhập / bottom nav che.
+  // Messages Stream từ Firestore
   // ────────────────────────────────────────────────────────────
-  Widget _buildBody() {
-    // Padding dưới = chiều cao input bar + khoảng đệm, để nội dung
-    // cuối không bị thanh nhập che. Bottom Navigation đã ẩn nên
-    // không cộng thêm chiều cao dock ở đây.
-    final double bottomReserve = _inputBarHeight + 16;
+  Widget _buildMessagesStream() {
+    final coupleId = widget.coupleId;
+    if (coupleId == null) {
+      return const Center(child: Text('Chưa kết nối phòng'));
+    }
 
-    return SingleChildScrollView(
-      controller: _scrollCtrl,
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: EdgeInsets.fromLTRB(12, 4, 12, bottomReserve),
-      child: Column(
-        children: [
-          for (final day in _days) ...[
-            _buildDateSeparator(day.label),
-            const SizedBox(height: 6),
-            for (final item in day.items) ...[
-              _buildItem(item),
-              const SizedBox(height: 8),
+    return StreamBuilder<List<ChatMessage>>(
+      stream: ChatService.instance.watchMessages(coupleId),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Lỗi tải tin nhắn: ${snapshot.error}',
+              style: const TextStyle(color: MateColors.rose),
+            ),
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(color: MateColors.pink),
+          );
+        }
+
+        final messages = snapshot.data!;
+        if (messages.isEmpty) {
+          return _buildEmptyState();
+        }
+
+        // Tự động cuộn xuống tin nhắn mới nhất
+        _scrollToBottom();
+
+        // Nhóm tin nhắn theo ngày
+        final grouped = _groupMessagesByDate(messages);
+        final double bottomReserve = _inputBarHeight + 16;
+
+        return SingleChildScrollView(
+          controller: _scrollCtrl,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: EdgeInsets.fromLTRB(12, 4, 12, bottomReserve),
+          child: Column(
+            children: [
+              for (final group in grouped) ...[
+                _buildDateSeparator(group.label),
+                const SizedBox(height: 6),
+                for (final msg in group.items) ...[
+                  _buildMessageItem(msg),
+                  const SizedBox(height: 8),
+                ],
+                const SizedBox(height: 6),
+              ],
             ],
-            const SizedBox(height: 6),
-          ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: MateColors.pink.withOpacity(0.12),
+            ),
+            child: const Icon(
+              Icons.chat_bubble_outline_rounded,
+              size: 36,
+              color: MateColors.pink,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Chưa có tin nhắn nào',
+            style: GoogleFonts.beVietnamPro(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: MateColors.plum,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Hãy gửi tin nhắn đầu tiên cho người ấy 💕',
+            style: TextStyle(
+              fontSize: 13,
+              color: MateColors.rose,
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  List<_DateGroup> _groupMessagesByDate(List<ChatMessage> messages) {
+    final groups = <_DateGroup>[];
+    if (messages.isEmpty) return groups;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+
+    String currentLabel = '';
+    List<ChatMessage> currentItems = [];
+
+    for (final msg in messages) {
+      final msgDate = DateTime(
+        msg.createdAt.year,
+        msg.createdAt.month,
+        msg.createdAt.day,
+      );
+
+      String label;
+      if (msgDate == today) {
+        label = 'Hôm nay';
+      } else if (msgDate == yesterday) {
+        label = 'Hôm qua';
+      } else {
+        label =
+            '${msgDate.day.toString().padLeft(2, '0')}/${msgDate.month.toString().padLeft(2, '0')}/${msgDate.year}';
+      }
+
+      if (label != currentLabel) {
+        if (currentItems.isNotEmpty) {
+          groups.add(_DateGroup(label: currentLabel, items: currentItems));
+        }
+        currentLabel = label;
+        currentItems = [msg];
+      } else {
+        currentItems.add(msg);
+      }
+    }
+
+    if (currentItems.isNotEmpty) {
+      groups.add(_DateGroup(label: currentLabel, items: currentItems));
+    }
+
+    return groups;
   }
 
   Widget _buildDateSeparator(String label) {
@@ -438,20 +513,16 @@ class _ChatTabState extends State<ChatTab> {
     );
   }
 
-  Widget _buildItem(dynamic item) {
-    if (item is _Bubble) {
-      return _buildBubble(item);
-    } else if (item is _ActivityCard) {
-      return _buildActivityCard(item);
+  Widget _buildMessageItem(ChatMessage msg) {
+    if (msg.isActivity) {
+      return _buildActivityCard(msg);
     }
-    return const SizedBox.shrink();
+    return _buildBubble(msg);
   }
 
-  // ────────────────────────────────────────────────────────────
-  // Bong bóng tin nhắn
-  // ────────────────────────────────────────────────────────────
-  Widget _buildBubble(_Bubble b) {
-    final isMe = b.side == _BubbleSide.me;
+  Widget _buildBubble(ChatMessage msg) {
+    final currentUid = widget.currentUserId ?? AuthService.instance.uid;
+    final isMe = msg.senderId == currentUid;
     final bubbleColor = isMe ? null : Colors.white;
     final textColor = isMe ? Colors.white : MateColors.plum;
 
@@ -461,6 +532,9 @@ class _ChatTabState extends State<ChatTab> {
       bottomLeft: Radius.circular(isMe ? 20 : 6),
       bottomRight: Radius.circular(isMe ? 6 : 20),
     );
+
+    final timeStr =
+        '${msg.createdAt.hour.toString().padLeft(2, '0')}:${msg.createdAt.minute.toString().padLeft(2, '0')}';
 
     final bubble = Container(
       constraints: const BoxConstraints(maxWidth: 270),
@@ -480,16 +554,43 @@ class _ChatTabState extends State<ChatTab> {
                 ),
               ],
       ),
-      child: Text(
-        b.text,
-        style: TextStyle(
-          color: textColor,
-          fontSize: 14.5,
-          height: 1.35,
-          fontWeight: FontWeight.w500,
-        ),
+      child: Column(
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          if (msg.isImage && msg.imageUrl != null) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                msg.imageUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Icon(
+                  Icons.broken_image_rounded,
+                  color: MateColors.rose,
+                ),
+              ),
+            ),
+            if (msg.text.isNotEmpty) const SizedBox(height: 6),
+          ],
+          if (msg.text.isNotEmpty)
+            Text(
+              msg.text,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 14.5,
+                height: 1.35,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+        ],
       ),
     );
+
+    final partnerName = widget.coupleData?.user2.name ?? 'M';
+    final initialPartner =
+        partnerName.isNotEmpty ? partnerName[0].toUpperCase() : 'M';
+    final myName = widget.coupleData?.user1.name ?? 'B';
+    final initialMe = myName.isNotEmpty ? myName[0].toUpperCase() : 'B';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -498,7 +599,7 @@ class _ChatTabState extends State<ChatTab> {
             isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (!isMe) _avatarMini('M'),
+          if (!isMe) _avatarMini(initialPartner),
           if (!isMe) const SizedBox(width: 6),
           Flexible(
             child: Column(
@@ -510,7 +611,7 @@ class _ChatTabState extends State<ChatTab> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: Text(
-                    b.time,
+                    timeStr,
                     style: const TextStyle(
                       color: MateColors.rose,
                       fontSize: 10.5,
@@ -522,7 +623,7 @@ class _ChatTabState extends State<ChatTab> {
             ),
           ),
           if (isMe) const SizedBox(width: 6),
-          if (isMe) _avatarMini('B'),
+          if (isMe) _avatarMini(initialMe),
         ],
       ),
     );
@@ -550,10 +651,26 @@ class _ChatTabState extends State<ChatTab> {
     );
   }
 
-  // ────────────────────────────────────────────────────────────
-  // Activity notification (card nằm giữa cuộc trò chuyện)
-  // ────────────────────────────────────────────────────────────
-  Widget _buildActivityCard(_ActivityCard a) {
+  Widget _buildActivityCard(ChatMessage msg) {
+    final meta = msg.meta;
+    final title = (meta['title'] as String?) ?? msg.text;
+    final subtitle = (meta['subtitle'] as String?) ?? '';
+    final badge = (meta['badge'] as String?) ?? 'HOẠT ĐỘNG';
+    final iconName = (meta['icon'] as String?) ?? 'favorite';
+
+    IconData icon = Icons.favorite_rounded;
+    Color iconColor = MateColors.pink;
+    if (iconName == 'location' || iconName == 'location_on') {
+      icon = Icons.location_on_rounded;
+      iconColor = MateColors.info;
+    } else if (iconName == 'pets') {
+      icon = Icons.pets_rounded;
+      iconColor = MateColors.pinkDeep;
+    }
+
+    final timeStr =
+        '${msg.createdAt.hour.toString().padLeft(2, '0')}:${msg.createdAt.minute.toString().padLeft(2, '0')}';
+
     return Center(
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
@@ -573,15 +690,15 @@ class _ChatTabState extends State<ChatTab> {
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    a.iconColor.withOpacity(0.2),
-                    a.iconColor.withOpacity(0.45),
+                    iconColor.withOpacity(0.2),
+                    iconColor.withOpacity(0.45),
                   ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 shape: BoxShape.circle,
               ),
-              child: Icon(a.icon, color: a.iconColor, size: 20),
+              child: Icon(icon, color: iconColor, size: 20),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -595,13 +712,13 @@ class _ChatTabState extends State<ChatTab> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: a.iconColor.withOpacity(0.15),
+                          color: iconColor.withOpacity(0.15),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
-                          a.badge,
+                          badge,
                           style: TextStyle(
-                            color: a.iconColor,
+                            color: iconColor,
                             fontSize: 9.5,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 0.4,
@@ -610,7 +727,7 @@ class _ChatTabState extends State<ChatTab> {
                       ),
                       const Spacer(),
                       Text(
-                        a.time,
+                        timeStr,
                         style: const TextStyle(
                           color: MateColors.rose,
                           fontSize: 10.5,
@@ -620,21 +737,23 @@ class _ChatTabState extends State<ChatTab> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    a.title,
+                    title,
                     style: const TextStyle(
                       color: MateColors.plum,
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 1),
-                  Text(
-                    a.subtitle,
-                    style: TextStyle(
-                      color: MateColors.rose.withOpacity(0.85),
-                      fontSize: 11.5,
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 1),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: MateColors.rose.withOpacity(0.85),
+                        fontSize: 11.5,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -645,22 +764,11 @@ class _ChatTabState extends State<ChatTab> {
   }
 
   // ────────────────────────────────────────────────────────────
-  // Thanh nhập tin nhắn (Messenger-style) — cố định dưới cùng
-  //
-  // Bố cục:
-  //   [+]  [🖼]  [GIF]  ( ━ pill nhập + emoji ━ )  [mic / send]
-  //
-  // - Tự né bàn phím qua MediaQuery.viewInsetsOf(context).bottom
-  // - Tự chừa khoảng Bottom Navigation (Floating Dock) bằng
-  //   _dockReservedHeight — vì Scaffold.extendBody:true nên
-  //   main_wrapper không tự padding cho body.
+  // Thanh nhập tin nhắn (Messenger-style)
   // ────────────────────────────────────────────────────────────
   Widget _buildInputBar(BuildContext context) {
     final viewInsets = MediaQuery.viewInsetsOf(context).bottom;
     final viewPaddingBottom = MediaQuery.viewPaddingOf(context).bottom;
-    // Bottom Navigation đã được ẩn hoàn toàn khi ở Tab Nhắn tin.
-    // Thanh nhập đặt sát đáy viewport, chỉ cần né system safe area
-    // (gesture bar / home indicator) và bàn phím.
     final bottomPadding = viewInsets + viewPaddingBottom;
 
     return Padding(
@@ -683,7 +791,6 @@ class _ChatTabState extends State<ChatTab> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // ── Cụm icon bên trái: +, ảnh, sticker/gif ──
             _circleIcon(
               icon: Icons.add_rounded,
               tooltip: 'Thêm',
@@ -703,7 +810,7 @@ class _ChatTabState extends State<ChatTab> {
             ),
             const SizedBox(width: 8),
 
-            // ── Ô nhập pill ở giữa, có icon emoji bên trong ──
+            // Ô nhập pill ở giữa
             Expanded(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -715,7 +822,6 @@ class _ChatTabState extends State<ChatTab> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // TextField — placeholder "Aa" / "Nhắn cho người yêu..."
                     Expanded(
                       child: TextField(
                         controller: _msgCtrl,
@@ -743,8 +849,6 @@ class _ChatTabState extends State<ChatTab> {
                         ),
                       ),
                     ),
-
-                    // Icon emoji bên trong pill, phía bên phải
                     _iconInsidePill(
                       icon: Icons.emoji_emotions_outlined,
                       tooltip: 'Emoji',
@@ -757,7 +861,7 @@ class _ChatTabState extends State<ChatTab> {
 
             const SizedBox(width: 8),
 
-            // ── Nút mic / send bên phải ──
+            // Nút mic / send
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 180),
               transitionBuilder: (child, anim) =>
@@ -782,7 +886,6 @@ class _ChatTabState extends State<ChatTab> {
     );
   }
 
-  // Icon vòng tròn nhỏ (nền hồng pastel) cho + / ảnh / sticker
   Widget _circleIcon({
     required IconData icon,
     required String tooltip,
@@ -808,7 +911,6 @@ class _ChatTabState extends State<ChatTab> {
     );
   }
 
-  // Icon bên trong pill (emoji) — nền trong suốt để giữ cảm giác "nằm trong ô"
   Widget _iconInsidePill({
     required IconData icon,
     required String tooltip,
@@ -827,7 +929,6 @@ class _ChatTabState extends State<ChatTab> {
     );
   }
 
-  // Nút hành động chính (mic / send) — gradient hồng, nổi bật
   Widget _primaryCircleIcon({
     required IconData icon,
     required String tooltip,
@@ -856,42 +957,8 @@ class _ChatTabState extends State<ChatTab> {
   }
 }
 
-// =============================================================
-// Models dữ liệu cục bộ cho UI — không gắn backend.
-// =============================================================
-
-enum _BubbleSide { me, them }
-
-class _Bubble {
-  final _BubbleSide side;
-  final String text;
-  final String time;
-  const _Bubble({
-    required this.side,
-    required this.text,
-    required this.time,
-  });
-}
-
-class _ActivityCard {
-  final IconData icon;
-  final Color iconColor;
-  final String badge;
-  final String title;
-  final String subtitle;
-  final String time;
-  const _ActivityCard({
-    required this.icon,
-    required this.iconColor,
-    required this.badge,
-    required this.title,
-    required this.subtitle,
-    required this.time,
-  });
-}
-
-class _DaySection {
+class _DateGroup {
   final String label;
-  final List<dynamic> items;
-  const _DaySection({required this.label, required this.items});
+  final List<ChatMessage> items;
+  const _DateGroup({required this.label, required this.items});
 }

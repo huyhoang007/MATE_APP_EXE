@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../constants/mate_theme.dart';
 import '../../models/couple_model.dart';
 import '../../widgets/vietqr_sheet.dart';
+import 'account_screen.dart';
 
 /// ============================================================
 /// ProfileTab - Tab 5: Hồ sơ cặp đôi
@@ -20,8 +21,7 @@ import '../../widgets/vietqr_sheet.dart';
 ///
 /// Dữ liệu thực: Firestore `couples/{id}/moments` cho Kỷ niệm & Timeline.
 /// Các chỉ số khác lấy từ `CoupleData` (startDate, intimacyScore, streakDays, pet...).
-/// Các phần Premium/FAQ/Settings dùng UI mock — nút bấm mở bottom sheet
-/// hoặc hiển thị snackbar.
+/// Các phần Premium/FAQ/Settings mở bottom sheet tương ứng hoặc hiển thị thông tin.
 /// ============================================================
 
 class ProfileTab extends StatelessWidget {
@@ -77,6 +77,8 @@ class ProfileTab extends StatelessWidget {
               code: data.code,
               isPaired: data.user2.name.isNotEmpty,
             ),
+            const SizedBox(height: 18),
+            _AccountSection(coupleId: coupleId),
             const SizedBox(height: 18),
             _CoupleTimelineSection(
               coupleId: coupleId,
@@ -1575,6 +1577,45 @@ class _EmptyTimeline extends StatelessWidget {
 // =============================================================
 // 7. Settings Sheet (mở từ icon ⚙ ở Header)
 // =============================================================
+
+// =============================================================
+// Account Section - Mở màn hình Tài khoản (đăng ký / đăng nhập)
+// =============================================================
+
+class _AccountSection extends StatelessWidget {
+  final String coupleId;
+  const _AccountSection({required this.coupleId});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle(
+            icon: Icons.person_pin_circle_outlined, title: 'Tài khoản của tôi'),
+        const SizedBox(height: 8),
+        _CardGroup(
+          children: [
+            _SettingTile(
+              icon: Icons.manage_accounts_rounded,
+              title: 'Tài khoản & đăng nhập',
+              subtitle: 'Biệt danh, email, bảo mật',
+              trailing: const Icon(Icons.chevron_right_rounded,
+                  color: MateColors.rose),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const AccountScreen(),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
 
 class _AppFooter extends StatelessWidget {
   @override

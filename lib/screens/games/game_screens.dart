@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../constants/mate_theme.dart';
+import '../../services/game_service.dart';
+import '../../services/wallet_service.dart';
 
 /// =============================================================
 // GameDetailScreen - Khung chung cho mọi trò chơi.
@@ -8,8 +10,8 @@ import '../../constants/mate_theme.dart';
 //   - Header: nút Back + tên game + icon
 //   - Khu vực nội dung game (do game tự cung cấp qua [child])
 //
-// Tất cả 4 game dưới đây đều là UI demo với mock data rõ ràng,
-// sẵn sàng tích hợp business logic sau (CP2/CP3).
+// Tất cả 4 game dưới đây đều được kết nối trực tiếp với GameService
+// và WalletService trên Cloud Firestore (couples/{coupleId}/games và wallet).
 // =============================================================
 
 class GameDetailScreen extends StatelessWidget {
@@ -103,39 +105,67 @@ class GameDetailScreen extends StatelessWidget {
 // 1. Hiểu nhau bao nhiêu? - Trắc nghiệm (QuizGame)
 // =====================================================================
 class QuizGame extends StatefulWidget {
-  const QuizGame({super.key});
+  final String? coupleId;
+  const QuizGame({super.key, this.coupleId});
   @override
   State<QuizGame> createState() => _QuizGameState();
 }
 
 class _QuizGameState extends State<QuizGame> {
-  static const _questions = [
+  static const _defaultQuestions = [
     _QuizQ(
       'Khi người yêu buồn, điều gì giúp họ vui lên nhất?',
       ['Một cái ôm thật chặt', 'Mua đồ ăn vặt', 'Cho không gian', 'Nhắn tin hỏi han'],
+      correctIndex: 0,
     ),
     _QuizQ(
       'Buổi hẹn hò lý tưởng của hai bạn là gì?',
       ['Xem phim cùng nhau', 'Nấu ăn tại nhà', 'Đi dạo công viên', 'Du lịch ngắn ngày'],
+      correctIndex: 0,
     ),
     _QuizQ(
       'Món ăn nào người yêu thích nhất?',
       ['Phở bò', 'Bún bò Huế', 'Cơm tấm', 'Bánh mì'],
+      correctIndex: 0,
     ),
     _QuizQ(
       'Nếu chỉ có 24h bên nhau, bạn sẽ làm gì?',
       ['Nấu ăn cùng nhau', 'Đi chơi xa', 'Ở nhà xem phim', 'Đi mua sắm'],
+      correctIndex: 0,
     ),
     _QuizQ(
       'Điều bạn yêu thích nhất ở người yêu?',
       ['Nụ cười', 'Sự kiên nhẫn', 'Trí thông minh', 'Sự hài hước'],
+      correctIndex: 0,
     ),
   ];
 
+  List<_QuizQ> _questions = _defaultQuestions;
   int _idx = 0;
   int _correct = 0;
   int? _picked;
   String _phase = 'idle';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadQuestions();
+  }
+
+  Future<void> _loadQuestions() async {
+    try {
+      final fetched = await GameService.instance.fetchQuestions('quiz', limit: 5);
+      if (fetched.isNotEmpty && mounted) {
+        setState(() {
+          _questions = fetched.map((q) => _QuizQ(
+            q.question,
+            q.options,
+            correctIndex: q.correctIndex >= 0 ? q.correctIndex : 0,
+          )).toList();
+        });
+      }
+    } catch (_) {}
+  }
 
   void _start() {
     setState(() {
@@ -148,7 +178,7 @@ class _QuizGameState extends State<QuizGame> {
 
   void _pick(int i) {
     if (_picked != null) return;
-    final isCorrect = i == 0; // Mock: đáp án đầu là đúng.
+    final isCorrect = i == _questions[_idx].correctIndex;
     setState(() {
       _picked = i;
       if (isCorrect) _correct++;
@@ -162,8 +192,22 @@ class _QuizGameState extends State<QuizGame> {
         });
       } else {
         setState(() => _phase = 'done');
+        _saveResult();
       }
     });
+  }
+
+  Future<void> _saveResult() async {
+    if (widget.coupleId != null && widget.coupleId!.isNotEmpty) {
+      try {
+        await GameService.instance.saveGameResult(
+          widget.coupleId!,
+          game: 'quiz',
+          score: _correct,
+          meta: {'total': _questions.length},
+        );
+      } catch (_) {}
+    }
   }
 
   @override
@@ -265,7 +309,7 @@ class _QuizGameState extends State<QuizGame> {
         const SizedBox(height: 18),
         ...List.generate(q.options.length, (i) {
           final picked = _picked == i;
-          final isCorrectAnswer = i == 0;
+          final isCorrectAnswer = i == q.correctIndex;
           Color bg = Colors.white;
           Color border = MateColors.border;
           Color textColor = MateColors.plum;
@@ -342,14 +386,16 @@ class _QuizGameState extends State<QuizGame> {
 class _QuizQ {
   final String text;
   final List<String> options;
-  const _QuizQ(this.text, this.options);
+  final int correctIndex;
+  const _QuizQ(this.text, this.options, {this.correctIndex = 0});
 }
 
 // =====================================================================
 // 2. Caro tình yêu - Tic Tac Toe 3x3 (TicTacToeGame)
 // =====================================================================
 class TicTacToeGame extends StatefulWidget {
-  const TicTacToeGame({super.key});
+  final String? coupleId;
+  const TicTacToeGame({super.key, this.coupleId});
   @override
   State<TicTacToeGame> createState() => _TicTacToeGameState();
 }
@@ -388,8 +434,25 @@ class _TicTacToeGameState extends State<TicTacToeGame> {
       final a = _board[line[0]];
       if (a != null && a == _board[line[1]] && a == _board[line[2]]) {
         _winLine = line;
+        _saveResult(winner: a);
         return;
       }
+    }
+    if (_isDraw) {
+      _saveResult(winner: 'draw');
+    }
+  }
+
+  Future<void> _saveResult({required String winner}) async {
+    if (widget.coupleId != null && widget.coupleId!.isNotEmpty) {
+      try {
+        await GameService.instance.saveGameResult(
+          widget.coupleId!,
+          game: 'tictactoe',
+          score: winner == 'draw' ? 5 : 10,
+          meta: {'winner': winner},
+        );
+      } catch (_) {}
     }
   }
 
@@ -573,13 +636,14 @@ class _TicTacToeGameState extends State<TicTacToeGame> {
 // 3. Đoán ý người yêu (MindReadGame)
 // =====================================================================
 class MindReadGame extends StatefulWidget {
-  const MindReadGame({super.key});
+  final String? coupleId;
+  const MindReadGame({super.key, this.coupleId});
   @override
   State<MindReadGame> createState() => _MindReadGameState();
 }
 
 class _MindReadGameState extends State<MindReadGame> {
-  static const _questions = [
+  static const _defaultQuestions = [
     _QuizQ(
       'Nếu hôm nay là sinh nhật của người yêu, bạn sẽ tặng gì?',
       ['Một bó hoa', 'Một món quà handmade', 'Một bữa tối lãng mạn', 'Một chuyến đi chơi'],
@@ -594,11 +658,32 @@ class _MindReadGameState extends State<MindReadGame> {
     ),
   ];
 
+  List<_QuizQ> _questions = _defaultQuestions;
   int _idx = 0;
   int? _pickA;
   int? _pickB;
   int _matches = 0;
   String _phase = 'idle';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadQuestions();
+  }
+
+  Future<void> _loadQuestions() async {
+    try {
+      final fetched = await GameService.instance.fetchQuestions('mindread', limit: 5);
+      if (fetched.isNotEmpty && mounted) {
+        setState(() {
+          _questions = fetched.map((q) => _QuizQ(
+            q.question,
+            q.options,
+          )).toList();
+        });
+      }
+    } catch (_) {}
+  }
 
   void _start() {
     setState(() {
@@ -626,7 +711,21 @@ class _MindReadGameState extends State<MindReadGame> {
         });
       } else {
         setState(() => _phase = 'done');
+        _saveResult();
       }
+    }
+  }
+
+  Future<void> _saveResult() async {
+    if (widget.coupleId != null && widget.coupleId!.isNotEmpty) {
+      try {
+        await GameService.instance.saveGameResult(
+          widget.coupleId!,
+          game: 'mindread',
+          score: _matches,
+          meta: {'total': _questions.length},
+        );
+      } catch (_) {}
     }
   }
 
@@ -893,7 +992,8 @@ class _MindReadGameState extends State<MindReadGame> {
 // 4. Thử thách cặp đôi (DailyChallengeGame)
 // =====================================================================
 class DailyChallengeGame extends StatefulWidget {
-  const DailyChallengeGame({super.key});
+  final String? coupleId;
+  const DailyChallengeGame({super.key, this.coupleId});
   @override
   State<DailyChallengeGame> createState() => _DailyChallengeGameState();
 }
@@ -965,6 +1065,28 @@ class _DailyChallengeGameState extends State<DailyChallengeGame> {
       ),
     ];
     _done = List.filled(_list.length, false);
+  }
+
+  Future<void> _claimChallenge(int i) async {
+    final c = _list[i];
+    setState(() => _done[i] = true);
+    if (widget.coupleId != null && widget.coupleId!.isNotEmpty) {
+      try {
+        await WalletService.instance.earnCoins(
+          widget.coupleId!,
+          c.coins,
+          'Thử thách: ${c.title}',
+        );
+        await GameService.instance.saveGameResult(
+          widget.coupleId!,
+          game: 'daily_challenge',
+          score: c.coins,
+          meta: {'challenge': c.title},
+        );
+      } catch (e) {
+        debugPrint('Lỗi nhận thưởng thử thách: $e');
+      }
+    }
   }
 
   int get _totalCoins => _list
@@ -1116,7 +1238,7 @@ class _DailyChallengeGameState extends State<DailyChallengeGame> {
                   ElevatedButton(
                     onPressed: done
                         ? null
-                        : () => setState(() => _done[i] = true),
+                        : () => _claimChallenge(i),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: done
                           ? const Color(0xFFDCFCE7)

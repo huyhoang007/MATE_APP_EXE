@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/couple_model.dart';
 import '../games/games_list_screen.dart';
 import '../utilities/utilities_home_screen.dart';
+import '../utilities/utilities_screens.dart';
 import '../../services/notification_service.dart';
 import '../../services/map_preferences_service.dart';
 import '../../widgets/notification_center_sheet.dart';
@@ -43,7 +44,7 @@ class _MapTabState extends State<MapTab> {
   void initState() {
     super.initState();
     _determinePosition();
-    // Seed notification mock data một lần khi tab được mở lần đầu.
+    // Khởi tạo notification service khi tab được mở lần đầu.
     NotificationService.instance.ensureSeeded();
     // Load persisted map preferences (light/dark, toggles).
     MapPreferencesService.instance.ensureLoaded();
@@ -79,17 +80,18 @@ class _MapTabState extends State<MapTab> {
         // vị trí khác. Comment gốc dùng move; giữ nguyên behavior.
         _mapController.move(_myLocation, 14.5);
 
-        // Đẩy vị trí lên Firestore - ghi vào user1 (current device).
+        // Đẩy vị trí lên Firestore - ghi vào members.{uid của tôi}.
         try {
           await FirebaseFirestore.instance
               .collection('couples')
               .doc(widget.coupleId)
               .update({
-            'user1.location': {
+            'members.${widget.currentUserId}.location': {
               'lat': pos.latitude,
               'lng': pos.longitude,
             },
-            'user1.lastActive': FieldValue.serverTimestamp(),
+            'members.${widget.currentUserId}.lastActive':
+                FieldValue.serverTimestamp(),
           });
         } catch (e) {
           // Ghi Firestore lỗi không chặn việc cập nhật UI.
@@ -358,7 +360,13 @@ class _MapTabState extends State<MapTab> {
                               backgroundColor: const Color(0xFF18181B),
                               shape: const StadiumBorder(),
                             ),
-                            onPressed: () {},
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const PremiumScreen(),
+                                ),
+                              );
+                            },
                             child: const Text("MUA NGAY", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
                           )
                         ],
@@ -369,10 +377,38 @@ class _MapTabState extends State<MapTab> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
-                        _buildAction(Icons.location_on, "Vị trí", const Color(0xFFCCFBF1), const Color(0xFF0D9488)),
+                        _buildAction(
+                          Icons.location_on,
+                          "Vị trí",
+                          const Color(0xFFCCFBF1),
+                          const Color(0xFF0D9488),
+                          onTap: () async {
+                            final success = await refreshLocation();
+                            if (success) {
+                              _mapController.move(_myLocation, 15.0);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Đã cập nhật vị trí mới nhất! 📍'),
+                                    duration: Duration(seconds: 1),
+                                  ),
+                                );
+                              }
+                            } else {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Không thể lấy vị trí. Vui lòng bật GPS và cấp quyền!'),
+                                    duration: Duration(seconds: 2),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        ),
                         _buildAction(Icons.auto_stories, "Khoảnh khắc", const Color(0xFFFCE7F3), const Color(0xFFE11D48), onTap: () { widget.onChangeTab?.call(2); }),
-                        _buildAction(Icons.videogame_asset, "Chơi", const Color(0xFFF3E8FF), const Color(0xFF9333EA), onTap: () { Navigator.of(context).push(MaterialPageRoute(builder: (_) => const GamesListScreen())); }),
-                        _buildAction(Icons.widgets, "Tiện ích", const Color(0xFFFEF9C3), const Color(0xFFD97706), onTap: () { Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UtilitiesHomeScreen())); }),
+                        _buildAction(Icons.videogame_asset, "Chơi", const Color(0xFFF3E8FF), const Color(0xFF9333EA), onTap: () { Navigator.of(context).push(MaterialPageRoute(builder: (_) => GamesListScreen(coupleId: widget.coupleId))); }),
+                        _buildAction(Icons.widgets, "Tiện ích", const Color(0xFFFEF9C3), const Color(0xFFD97706), onTap: () { Navigator.of(context).push(MaterialPageRoute(builder: (_) => UtilitiesHomeScreen(coupleId: widget.coupleId))); }),
                       ],
                     ),
                     const SizedBox(height: 20),

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-
 import '../../constants/mate_theme.dart';
-
+import '../../services/wallet_service.dart';
 import 'utilities_screens.dart';
 
 import 'affiliate_screens.dart';
@@ -47,8 +46,8 @@ import '../../widgets/affiliate_category_card.dart';
 
 
 class UtilitiesHomeScreen extends StatelessWidget {
-
-  const UtilitiesHomeScreen({super.key});
+  final String? coupleId;
+  const UtilitiesHomeScreen({super.key, this.coupleId});
 
 
 
@@ -217,23 +216,15 @@ class UtilitiesHomeScreen extends StatelessWidget {
 
 
                   // Ví xu MATE.
-
                   _WalletCard(
-
+                    coupleId: coupleId,
                     onTapHistory: () {
-
                       Navigator.of(context).push(
-
                         MaterialPageRoute(
-
-                          builder: (_) => const WalletScreen(),
-
+                          builder: (_) => WalletScreen(coupleId: coupleId),
                         ),
-
                       );
-
                     },
-
                   ),
 
                   const SizedBox(height: 18),
@@ -287,99 +278,52 @@ class UtilitiesHomeScreen extends StatelessWidget {
                       switch (i) {
 
                         case 0:
-
                           item = ShopRewardItem(
-
                             icon: Icons.checkroom_rounded,
-
                             color: const Color(0xFFE11D48),
-
                             bg: const Color(0xFFFCE7F3),
-
                             imageAsset: 'assets/images/shop/shop.jpg',
-
                             title: 'Shop vật phẩm',
-
                             sub: 'Trang phục & phụ kiện Pet',
-
                             badge: 'Mua bằng xu',
-
-                            onTap: () => goTo(() => const ItemShopScreen()),
-
+                            onTap: () => goTo(() => ItemShopScreen(coupleId: coupleId)),
                           );
-
                           break;
-
                         case 1:
-
                           item = ShopRewardItem(
-
                             icon: Icons.card_giftcard_rounded,
-
                             color: const Color(0xFF9333EA),
-
                             bg: const Color(0xFFF3E8FF),
-
                             imageAsset: 'assets/images/shop/lucky.jpg',
-
                             title: 'Lucky Box',
-
                             sub: 'Mở hộp quà bất ngờ',
-
                             badge: 'Quà may mắn',
-
-                            onTap: () => goTo(() => const LuckyBoxScreen()),
-
+                            onTap: () => goTo(() => LuckyBoxScreen(coupleId: coupleId)),
                           );
-
                           break;
-
                         case 2:
-
                           item = ShopRewardItem(
-
                             icon: Icons.calendar_month_rounded,
-
                             color: const Color(0xFFD97706),
-
                             bg: const Color(0xFFFEF9C3),
-
                             imageAsset: 'assets/images/shop/daily.jpg',
-
                             title: 'Quà hằng ngày',
-
                             sub: 'Điểm danh nhận xu',
-
                             badge: 'Mỗi ngày',
-
                             onTap: () =>
-
-                                goTo(() => const DailyRewardsScreen()),
-
+                                goTo(() => DailyRewardsScreen(coupleId: coupleId)),
                           );
-
                           break;
-
                         default:
-
                           item = ShopRewardItem(
-
                             icon: Icons.inventory_2_rounded,
-
                             color: const Color(0xFF0D9488),
-
                             bg: const Color(0xFFCCFBF1),
-
                             imageAsset: 'assets/images/shop/inventory.jpg',
-
                             title: 'Kho đồ',
-
                             sub: 'Bộ sưu tập của bạn',
-
                             badge: 'Vật phẩm',
-
-                            onTap: () => goTo(() => const InventoryScreen()),
-
+                            onTap: () => goTo(() => InventoryScreen(coupleId: coupleId)),
                           );
 
                       }
@@ -891,109 +835,75 @@ class _PremiumBanner extends StatelessWidget {
 
 
 class _WalletCard extends StatelessWidget {
-
+  final String? coupleId;
   final VoidCallback onTapHistory;
-
-  const _WalletCard({required this.onTapHistory});
-
-
+  const _WalletCard({required this.onTapHistory, this.coupleId});
 
   @override
-
   Widget build(BuildContext context) {
-
     return Container(
-
       padding: const EdgeInsets.all(16),
-
       decoration: BoxDecoration(
-
         color: Colors.white,
-
         borderRadius: BorderRadius.circular(MateRadius.card),
-
         border: Border.all(color: MateColors.border),
-
         boxShadow: MateShadows.soft,
-
       ),
-
       child: Row(
-
         children: [
-
           Container(
-
             width: 52,
-
             height: 52,
-
             alignment: Alignment.center,
-
             decoration: BoxDecoration(
-
               color: const Color(0xFFFEF9C3),
-
               borderRadius: BorderRadius.circular(16),
-
             ),
-
             child: const Icon(Icons.monetization_on_rounded,
-
                 color: Color(0xFFEAB308), size: 30),
-
           ),
-
           const SizedBox(width: 14),
-
           Expanded(
-
             child: Column(
-
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
-
                 Text(
-
                   'Ví xu MATE',
-
                   style: TextStyle(
-
                     fontSize: 12,
-
                     fontWeight: FontWeight.w600,
-
                     color: MateColors.plum.withOpacity(0.65),
-
                   ),
-
                 ),
-
                 const SizedBox(height: 2),
-
-                const Text(
-
-                  '1.250 xu',
-
-                  style: TextStyle(
-
-                    fontSize: 22,
-
-                    fontWeight: FontWeight.w900,
-
-                    color: MateColors.plum,
-
-                    height: 1.1,
-
+                if (coupleId != null && coupleId!.isNotEmpty)
+                  StreamBuilder<int>(
+                    stream: WalletService.instance.watchCoins(coupleId!),
+                    builder: (context, snap) {
+                      final coins = snap.data ?? 0;
+                      return Text(
+                        '$coins xu',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: MateColors.plum,
+                          height: 1.1,
+                        ),
+                      );
+                    },
+                  )
+                else
+                  const Text(
+                    '0 xu',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: MateColors.plum,
+                      height: 1.1,
+                    ),
                   ),
-
-                ),
-
               ],
-
             ),
-
           ),
 
           TextButton.icon(

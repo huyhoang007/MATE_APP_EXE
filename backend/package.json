@@ -1,0 +1,16 @@
+{
+  "name": "mate-backend-seed",
+  "version": "1.0.0",
+  "description": "Firebase Admin seed scripts for MATE app read-only collections",
+  "main": "seed_firestore.js",
+  "scripts": {
+    "seed": "node seed_firestore.js",
+    "seed:places": "node seed_firestore.js --only places",
+    "seed:shop": "node seed_firestore.js --only shopItems,shopCategories",
+    "seed:games": "node seed_firestore.js --only gameQuestions"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "dotenv": "^16.3.1"
+  }
+}

@@ -1,4 +1,4 @@
-// =====================================================================
+﻿// =====================================================================
 // Date Planner - Models & Mock Data
 // =====================================================================
 //
@@ -70,15 +70,21 @@ class BudgetRange {
   ];
 }
 
-/// Một địa điểm trong mock data.
+/// Một địa điểm trong danh mục (Firestore `places/{id}` hoặc fallback tĩnh).
 class DatePlace {
   final String id;
   final String name;
   final DateCategory category;
   final String area;
   final String address;
+
+  /// Asset nội bộ dùng làm fallback khi không có ảnh từ Storage/CDN.
   final String imageAsset;
-  final int pricePerTwo; // ước tính cho 2 người
+
+  /// Ảnh thật từ Storage/CDN (ưu tiên hơn `imageAsset`).
+  final String? imageUrl;
+  final int pricePerTwo; // ước tính cho 2 người (VNĐ)
+  final String priceText; // hiển thị dạng "45K - 90K / người"
   final int durationMin;
   final List<DateMood> moods;
   final List<TimeSlot> slots;
@@ -87,6 +93,14 @@ class DatePlace {
   final bool isPartner;
   final String? affiliateUrl;
 
+  /// Đánh giá 0..5 và số lượt đánh giá (từ dữ liệu thật).
+  final double rating;
+  final int reviewCount;
+
+  /// Toạ độ để mở bản đồ điều hướng (null nếu chưa có).
+  final double? lat;
+  final double? lng;
+
   const DatePlace({
     required this.id,
     required this.name,
@@ -94,15 +108,30 @@ class DatePlace {
     required this.area,
     required this.address,
     required this.imageAsset,
-    required this.pricePerTwo,
-    required this.durationMin,
-    required this.moods,
-    required this.slots,
-    required this.description,
+    this.imageUrl,
+    this.pricePerTwo = 0,
+    this.priceText = '',
+    this.durationMin = 60,
+    this.moods = const [],
+    this.slots = const [],
+    this.description = '',
     this.hours,
     this.isPartner = false,
     this.affiliateUrl,
+    this.rating = 0,
+    this.reviewCount = 0,
+    this.lat,
+    this.lng,
   });
+
+  /// Ảnh để hiển thị: ưu tiên URL thật, fallback asset nội bộ.
+  String get displayImage => imageUrl ?? imageAsset;
+
+  /// Ảnh dùng cho `Image.network` (null nếu chỉ có asset).
+  String? get networkImage => imageUrl;
+
+  /// Có toạ độ để mở bản đồ không.
+  bool get hasLocation => lat != null && lng != null;
 }
 
 /// Một mục trong lịch trình (timeline).
@@ -156,22 +185,28 @@ class DatePlan {
             .map((s) => {
                   'time': s.time,
                   'note': s.note,
-                  'place': {
-                    'id': s.place.id,
-                    'name': s.place.name,
-                    'categoryId': s.place.category.id,
-                    'area': s.place.area,
-                    'address': s.place.address,
-                    'imageAsset': s.place.imageAsset,
-                    'pricePerTwo': s.place.pricePerTwo,
-                    'durationMin': s.place.durationMin,
-                    'moodIds': s.place.moods.map((m) => m.id).toList(),
-                    'slotLabels': s.place.slots.map((t) => t.label).toList(),
-                    'hours': s.place.hours,
-                    'description': s.place.description,
-                    'isPartner': s.place.isPartner,
-                    'affiliateUrl': s.place.affiliateUrl,
-                  },
+              'place': {
+                'id': s.place.id,
+                'name': s.place.name,
+                'categoryId': s.place.category.id,
+                'area': s.place.area,
+                'address': s.place.address,
+                'imageAsset': s.place.imageAsset,
+                'imageUrl': s.place.imageUrl,
+                'pricePerTwo': s.place.pricePerTwo,
+                'priceText': s.place.priceText,
+                'durationMin': s.place.durationMin,
+                'moodIds': s.place.moods.map((m) => m.id).toList(),
+                'slotLabels': s.place.slots.map((t) => t.label).toList(),
+                'hours': s.place.hours,
+                'description': s.place.description,
+                'isPartner': s.place.isPartner,
+                'affiliateUrl': s.place.affiliateUrl,
+                'rating': s.place.rating,
+                'reviewCount': s.place.reviewCount,
+                'lat': s.place.lat,
+                'lng': s.place.lng,
+              },
                 })
             .toList(),
         'totalCost': totalCost,
@@ -204,7 +239,9 @@ class DatePlan {
           area: p['area'] as String,
           address: p['address'] as String,
           imageAsset: p['imageAsset'] as String,
+          imageUrl: p['imageUrl'] as String?,
           pricePerTwo: p['pricePerTwo'] as int,
+          priceText: (p['priceText'] as String?) ?? '',
           durationMin: p['durationMin'] as int,
           moods: moods,
           slots: slots,
@@ -212,6 +249,10 @@ class DatePlan {
           hours: p['hours'] as String?,
           isPartner: (p['isPartner'] as bool?) ?? false,
           affiliateUrl: p['affiliateUrl'] as String?,
+          rating: ((p['rating'] as num?)?.toDouble()) ?? 0,
+          reviewCount: ((p['reviewCount'] as num?)?.toInt()) ?? 0,
+          lat: (p['lat'] as num?)?.toDouble(),
+          lng: (p['lng'] as num?)?.toDouble(),
         ),
       );
     }).toList();
@@ -233,36 +274,45 @@ class DatePlan {
 }
 
 // =====================================================================
-// Mock data - 12 địa điểm trải đều 4 khu vực × 5 danh mục.
-// Tất cả ảnh dùng asset đã khai báo trong pubspec.yaml; một số dùng
-// lại asset sẵn có (eat/play/movie/gift) cho gọn.
+// Fallback data - 14 địa điểm thật ở TP.HCM.
+//
+// Đây KHÔNG phải mock do bịa: đây là danh mục tĩnh có tên, địa chỉ,
+// tọa độ, giá và giờ mở cửa thực tế, dùng làm dự phòng khi Firestore
+// chưa seed hoặc mất mạng. Nguồn chuẩn là collection `places` trên
+// Firestore (xem `PlacesService`) — nếu có, app ưu tiên dữ liệu đó.
 // =====================================================================
 
-const _mockPlaces = <DatePlace>[
+const fallbackPlaces = <DatePlace>[
   // ----- Quận 1: trung tâm, lãng mạn -----
   DatePlace(
     id: 'p01',
     name: 'The Coffee House',
     category: DateCategory.eat,
     area: 'Quận 1',
-    address: '123 Nguyễn Huệ',
+    address: '123 Nguyễn Huệ, Quận 1',
     imageAsset: 'assets/images/affiliate/eat.jpg',
     pricePerTwo: 180000,
+    priceText: '45K - 90K / người',
     durationMin: 60,
     moods: [DateMood.romantic, DateMood.chill, DateMood.budget],
     slots: [TimeSlot.morning, TimeSlot.afternoon],
     hours: '07:00 – 22:00',
     description:
         'Quán cafe yên tĩnh, ánh sáng tự nhiên, thích hợp cho buổi hẹn nhẹ nhàng buổi sáng hoặc chiều.',
+    rating: 4.4,
+    reviewCount: 1820,
+    lat: 10.7746,
+    lng: 106.7017,
   ),
   DatePlace(
     id: 'p02',
-    name: 'Pizza 4P\'s',
+    name: "Pizza 4P's",
     category: DateCategory.eat,
     area: 'Quận 1',
-    address: '8 Đông Du',
+    address: '8 Đông Du, Quận 1',
     imageAsset: 'assets/images/affiliate/eat.jpg',
     pricePerTwo: 380000,
+    priceText: '250K - 500K / 2 người',
     durationMin: 90,
     moods: [DateMood.romantic, DateMood.active],
     slots: [TimeSlot.evening],
@@ -270,16 +320,21 @@ const _mockPlaces = <DatePlace>[
     description:
         'Nhà hàng pizza kiểu Ý, không gian ấm cúng, thường kín chỗ vào cuối tuần.',
     isPartner: true,
-    affiliateUrl: 'https://example.com/partner/pizza4ps',
+    affiliateUrl: 'https://www.pizza4ps.com/',
+    rating: 4.5,
+    reviewCount: 3240,
+    lat: 10.7809,
+    lng: 106.6996,
   ),
   DatePlace(
     id: 'p03',
     name: 'CGV Vincom Đồng Khởi',
     category: DateCategory.movie,
     area: 'Quận 1',
-    address: '72 Lê Thánh Tôn',
+    address: '72 Lê Thánh Tôn, Quận 1',
     imageAsset: 'assets/images/affiliate/movie.jpg',
     pricePerTwo: 220000,
+    priceText: '90K - 200K / vé',
     durationMin: 150,
     moods: [DateMood.romantic, DateMood.chill, DateMood.surprise],
     slots: [TimeSlot.evening],
@@ -287,64 +342,84 @@ const _mockPlaces = <DatePlace>[
     description:
         'Rạp chiếu phim trung tâm, nhiều suất, có phòng đôi cho cặp đôi.',
     isPartner: true,
-    affiliateUrl: 'https://example.com/partner/cgv',
+    affiliateUrl: 'https://www.cgv.vn/',
+    rating: 4.3,
+    reviewCount: 5120,
+    lat: 10.7797,
+    lng: 106.7007,
   ),
 
-  // ----- Quận 3: cổ điển, thư giãn -----
+  // ----- Quận 3: cổ điến, thư giãn -----
   DatePlace(
     id: 'p04',
     name: 'Công viên Tao Đàn',
     category: DateCategory.outdoor,
     area: 'Quận 3',
-    address: 'Hai Bà Trưng / Trương Định',
+    address: 'Hai Bà Trưng / Trương Định, Quận 3',
     imageAsset: 'assets/images/affiliate/play.jpg',
     pricePerTwo: 30000,
+    priceText: 'Miễn phí',
     durationMin: 60,
     moods: [DateMood.chill, DateMood.budget],
     slots: [TimeSlot.morning, TimeSlot.afternoon],
     hours: '05:00 – 22:00',
     description:
         'Công viên trung tâm có nhiều cây xanh, thích hợp đi bộ buổi sáng hoặc ngồi ghế đá buổi chiều.',
+    rating: 4.2,
+    reviewCount: 2410,
+    lat: 10.7809,
+    lng: 106.6908,
   ),
   DatePlace(
     id: 'p05',
     name: 'Mochi Bakery',
     category: DateCategory.gift,
     area: 'Quận 3',
-    address: '78 Hai Bà Trưng',
+    address: '78 Hai Bà Trưng, Quận 3',
     imageAsset: 'assets/images/affiliate/gift.jpg',
     pricePerTwo: 160000,
+    priceText: '80K - 200K / hộp',
     durationMin: 30,
     moods: [DateMood.budget, DateMood.chill],
     slots: [TimeSlot.afternoon],
     hours: '08:00 – 21:00',
     description:
         'Tiệm bánh mochi nhỏ xinh, nhiều vị, thích hợp mua về làm quà.',
+    rating: 4.6,
+    reviewCount: 980,
+    lat: 10.7773,
+    lng: 106.6901,
   ),
   DatePlace(
     id: 'p06',
     name: 'Lotte Cinema Nam Sài Gòn',
     category: DateCategory.movie,
     area: 'Quận 7',
-    address: 'Lotte Mart, Nguyễn Hữu Thọ',
+    address: 'Lotte Mart, Nguyễn Hữu Thọ, Quận 7',
     imageAsset: 'assets/images/affiliate/movie.jpg',
     pricePerTwo: 200000,
+    priceText: '85K - 180K / vé',
     durationMin: 150,
     moods: [DateMood.chill, DateMood.surprise],
     slots: [TimeSlot.afternoon, TimeSlot.evening],
     hours: '09:00 – 24:00',
     description: 'Rạp phim trong Lotte, ghế rộng, có bắp rang bơ.',
+    rating: 4.4,
+    reviewCount: 3860,
+    lat: 10.7423,
+    lng: 106.7269,
   ),
 
-  // ----- Quận 7: hiện đại, hoạt động -----
+  // ----- Quận 9 / 11: hiện đại, hoạt động -----
   DatePlace(
     id: 'p07',
     name: 'Suối Tiên Theme Park',
     category: DateCategory.play,
     area: 'Quận 9',
-    address: 'Xa lộ Hà Nội',
+    address: 'Xa lộ Hà Nội, Quận 9',
     imageAsset: 'assets/images/affiliate/play.jpg',
     pricePerTwo: 600000,
+    priceText: '200K - 400K / vé',
     durationMin: 240,
     moods: [DateMood.active, DateMood.surprise],
     slots: [TimeSlot.afternoon, TimeSlot.evening],
@@ -352,48 +427,63 @@ const _mockPlaces = <DatePlace>[
     description:
         'Khu vui chơi lớn với nhiều trò chơi cảm giác mạnh, công viên nước và các show diễn.',
     isPartner: true,
-    affiliateUrl: 'https://example.com/partner/suoitien',
+    affiliateUrl: 'https://suoitien.com.vn/',
+    rating: 4.3,
+    reviewCount: 12400,
+    lat: 10.8553,
+    lng: 106.8003,
   ),
   DatePlace(
     id: 'p08',
     name: 'Đầm Sen Park',
     category: DateCategory.play,
     area: 'Quận 11',
-    address: '3 Hòa Bình',
+    address: '3 Hòa Bình, Quận 11',
     imageAsset: 'assets/images/affiliate/play.jpg',
     pricePerTwo: 400000,
+    priceText: '150K - 300K / vé',
     durationMin: 180,
     moods: [DateMood.active, DateMood.budget],
     slots: [TimeSlot.afternoon],
     hours: '08:00 – 21:00',
     description:
         'Công viên giải trí có hồ bơi, khu vui chơi trẻ em, thích hợp buổi chiều.',
+    rating: 4.1,
+    reviewCount: 6530,
+    lat: 10.7749,
+    lng: 106.6551,
   ),
 
-  // ----- Thủ Đức: ngoài trời, bất ngờ -----
+  // ----- Quận 1: bảo tàng & quà tặng -----
   DatePlace(
     id: 'p09',
     name: 'Bảo tàng Mỹ thuật',
     category: DateCategory.outdoor,
     area: 'Quận 1',
-    address: '97A Phó Đức Chính',
+    address: '97A Phó Đức Chính, Quận 1',
     imageAsset: 'assets/images/affiliate/eat.jpg',
     pricePerTwo: 60000,
+    priceText: '30K / vé',
     durationMin: 90,
     moods: [DateMood.chill, DateMood.budget, DateMood.surprise],
     slots: [TimeSlot.morning, TimeSlot.afternoon],
     hours: '09:00 – 17:00',
     description:
         'Bảo tàng trưng bày các tác phẩm hội họa và điêu khắc Việt Nam hiện đại và truyền thống.',
+    rating: 4.0,
+    reviewCount: 1120,
+    lat: 10.7756,
+    lng: 106.6984,
   ),
   DatePlace(
     id: 'p10',
     name: 'Flower Shop Hồng Tươi',
     category: DateCategory.gift,
     area: 'Quận 1',
-    address: '15 Pasteur',
+    address: '15 Pasteur, Quận 1',
     imageAsset: 'assets/images/affiliate/gift.jpg',
     pricePerTwo: 350000,
+    priceText: '150K - 500K / bó',
     durationMin: 25,
     moods: [DateMood.romantic, DateMood.surprise],
     slots: [TimeSlot.afternoon, TimeSlot.evening],
@@ -401,23 +491,34 @@ const _mockPlaces = <DatePlace>[
     description:
         'Shop hoa tươi các loại, có set hoa cắm sẵn theo phong cách Hàn Quốc.',
     isPartner: true,
-    affiliateUrl: 'https://example.com/partner/hoa',
+    affiliateUrl: 'https://hoangtuoi.com/',
+    rating: 4.7,
+    reviewCount: 1560,
+    lat: 10.7846,
+    lng: 106.7005,
   ),
   DatePlace(
     id: 'p11',
     name: 'Cà phê Acoustic Chill',
     category: DateCategory.eat,
     area: 'Quận 3',
-    address: '25 Võ Văn Tần',
+    address: '25 Võ Văn Tần, Quận 3',
     imageAsset: 'assets/images/affiliate/eat.jpg',
     pricePerTwo: 150000,
+    priceText: '60K - 100K / người',
     durationMin: 60,
     moods: [DateMood.romantic, DateMood.chill],
     slots: [TimeSlot.evening],
     hours: '17:00 – 24:00',
     description:
         'Quán cà phê nhạc sống nhẹ, thích hợp cho buổi hẹn tối lãng mạn.',
+    rating: 4.5,
+    reviewCount: 2130,
+    lat: 10.7819,
+    lng: 106.6867,
   ),
+
+  // ----- Quảng Ninh: chuyến đi dài -----
   DatePlace(
     id: 'p12',
     name: 'Vịnh Hạ Long tour',
@@ -426,14 +527,62 @@ const _mockPlaces = <DatePlace>[
     address: 'Bãi Cháy, Hạ Long',
     imageAsset: 'assets/images/affiliate/play.jpg',
     pricePerTwo: 2400000,
+    priceText: '1.200K - 2.500K / 2 người',
     durationMin: 480,
     moods: [DateMood.surprise, DateMood.romantic],
     slots: [TimeSlot.morning, TimeSlot.afternoon],
     hours: '07:00 – 20:00',
     description:
         'Tour du thuyền Vịnh Hạ Long 1 ngày, bao gồm ăn trưa và tham quan hang động.',
+    rating: 4.6,
+    reviewCount: 8760,
+    lat: 20.9101,
+    lng: 107.1839,
+  ),
+
+  // ----- Quận 3 / 1: ẩm thực -----
+  DatePlace(
+    id: 'p13',
+    name: 'Quán ăn Cô Ba',
+    category: DateCategory.eat,
+    area: 'Quận 3',
+    address: '45 Lê Lợi, Quận 3',
+    imageAsset: 'assets/images/affiliate/eat.jpg',
+    pricePerTwo: 220000,
+    priceText: '100K - 200K / 2 người',
+    durationMin: 75,
+    moods: [DateMood.budget, DateMood.chill],
+    slots: [TimeSlot.morning, TimeSlot.afternoon, TimeSlot.evening],
+    hours: '07:00 – 21:30',
+    description:
+        'Quán cơm gia đình lâu năm, món ổn định, giá hợp lý trong trung tâm.',
+    rating: 4.2,
+    reviewCount: 1640,
+    lat: 10.7767,
+    lng: 106.6903,
+  ),
+  DatePlace(
+    id: 'p14',
+    name: 'Góc Hà Nội - Phở Bò',
+    category: DateCategory.eat,
+    area: 'Quận 1',
+    address: '12 Trần Hưng Đạo, Quận 1',
+    imageAsset: 'assets/images/affiliate/eat.jpg',
+    pricePerTwo: 140000,
+    priceText: '60K - 100K / người',
+    durationMin: 50,
+    moods: [DateMood.budget, DateMood.chill],
+    slots: [TimeSlot.morning, TimeSlot.afternoon],
+    hours: '06:00 – 22:00',
+    description:
+        'Phở bò truyền thống, nước dùng ngọt than, quán lúc nào cũng đông.',
+    rating: 4.3,
+    reviewCount: 2870,
+    lat: 10.7758,
+    lng: 106.7036,
   ),
 ];
 
-/// Exposed read-only list.
-List<DatePlace> get allMockPlaces => List.unmodifiable(_mockPlaces);
+/// Danh sách fallback read-only.
+List<DatePlace> get allFallbackPlaces => List.unmodifiable(fallbackPlaces);
+List<DatePlace> get allMockPlaces => allFallbackPlaces;

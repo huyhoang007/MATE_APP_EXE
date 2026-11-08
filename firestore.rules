@@ -1,0 +1,74 @@
+rules_version = '2';
+
+// ============================================================
+// MATE - Firestore Security Rules (Production & Realtime Optimized)
+// ============================================================
+//
+// Nguyên tắc:
+//   1. Mọi truy cập đều yêu cầu đã đăng nhập (request.auth != null)
+//   2. Hồ sơ cá nhân users/{uid} chỉ chính chủ được đọc/ghi
+//   3. Dữ liệu cặp đôi couples/{code} và toàn bộ subcollections (messages,
+//      moments, members, wallet, diaries, pet, datePlans, v.v.)
+//      được phân quyền cho các thành viên đã đăng nhập.
+//   4. Danh mục công khai (places, shopItems, shopCategories, gameQuestions)
+//      chỉ cho phép đọc (read-only), không cho ghi từ client.
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: kiểm tra đã đăng nhập
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // ---------- users/{uid} : hồ sơ cá nhân ----------
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ---------- couples/{code} : dữ liệu cặp đôi & toàn bộ subcollection ----------
+    match /couples/{code} {
+      // Cho phép tạo cặp đôi mới nếu đã đăng nhập
+      allow create: if isSignedIn();
+
+      // Cho phép đọc và cập nhật cặp đôi
+      allow read, update: if isSignedIn();
+
+      // Không cho xoá cặp đôi từ client
+      allow delete: if false;
+
+      // Cho phép đọc/ghi toàn bộ subcollections (messages, moments, members, wallet, inventory, diaries, datePlans, v.v.)
+      match /{allSubcollections=**} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // ---------- Danh mục công khai (Read-only) ----------
+    // Được seed từ Admin SDK / CLI. Client chỉ đọc.
+    match /places/{placeId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /shopItems/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /shopCategories/{categoryId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /gameQuestions/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Mọi truy vấn khác ngoài các collection trên: chặn
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

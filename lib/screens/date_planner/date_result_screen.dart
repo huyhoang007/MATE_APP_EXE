@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 import '../../constants/mate_theme.dart';
+import '../../services/auth_service.dart';
 import 'date_models.dart';
 import 'date_planner_service.dart';
 import 'date_widgets.dart';
@@ -100,11 +101,14 @@ class _DateResultScreenState extends State<DateResultScreen> {
       totalCost: _totalCost,
       totalMinutes: _totalMinutes,
     );
-    await DatePlannerService.instance.savePlan(plan);
+    await DatePlannerService.instance.savePlan(
+      plan,
+      coupleId: AuthService.instance.coupleCode,
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Đã lưu kế hoạch vào thiết bị 💕'),
+        content: Text('Đã lưu kế hoạch hẹn hò của cặp đôi 💕'),
         duration: Duration(seconds: 2),
       ),
     );

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../constants/mate_theme.dart';
+import '../services/auth_service.dart';
 import '../services/pair_service.dart';
 import '../widgets/mate_card.dart';
 import '../widgets/mate_cloud.dart';
@@ -11,7 +12,13 @@ import '../widgets/mate_cloud.dart';
 /// ============================================================
 /// Onboarding Screen - Màn hình ghép đôi
 /// Nhập biệt danh, chọn ngày bắt đầu yêu, tạo/nhập mã MATE-xxxx.
+///
 /// Tích hợp PairService + Firestore để ghép đôi realtime.
+///
+/// ĐĂNG NHẬP:
+///   User đã được đăng nhập anonymous tự động ở `main.dart` (_Gate).
+///   Màn hình này chỉ lo phần ghép đôi. Biệt danh được lưu vào hồ sơ
+///   `users/{uid}` để lần sau mở app vẫn nhớ tên.
 /// ============================================================
 
 enum PairRole { creator, joiner }
@@ -56,6 +63,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   bool _isJoining = false;
   StreamSubscription<PairSession>? _roomSub;
   String? _pairError;
+
+  @override
+  void initState() {
+    super.initState();
+    // Điền sẵn biệt danh đã lưu (nếu có) để user không phải nhập lại.
+    final saved = AuthService.instance.profile?.nickname;
+    if (saved != null && saved.isNotEmpty && saved != 'Bạn') {
+      nameCtrl.text = saved;
+    }
+  }
 
   @override
   void dispose() {
@@ -135,6 +152,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _pairError = null;
     });
     try {
+      if (!AuthService.instance.isSignedIn) {
+        await AuthService.instance.ensureSignedIn(force: true);
+      }
+      // Lưu biệt danh vào hồ sơ user trước (để lần sau mở app vẫn nhớ).
+      await AuthService.instance.updateNickname(nickname);
+
       final code = await PairService.instance.createRoom(
         nickname: nickname,
         startDate: date,
@@ -197,6 +220,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _pairError = null;
     });
     try {
+      if (!AuthService.instance.isSignedIn) {
+        await AuthService.instance.ensureSignedIn(force: true);
+      }
+      // Lưu biệt danh vào hồ sơ user trước.
+      await AuthService.instance.updateNickname(nickname);
+
       final session = await PairService.instance.joinRoom(
         code: raw,
         partnerNickname: nickname,
@@ -577,6 +606,26 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
           ],
         ),
+        if (AuthService.instance.isGuest) ...[
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: () {
+              _complete(
+                nicknameOverride: name,
+                code: _createdCode!,
+                role: PairRole.creator,
+              );
+            },
+            icon: const Icon(Icons.arrow_forward_rounded, size: 16, color: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: MateColors.pink,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              shape: const StadiumBorder(),
+            ),
+            label: const Text('Vào trang chính (Chế độ Khách)'),
+          ),
+        ],
       ],
     );
   }

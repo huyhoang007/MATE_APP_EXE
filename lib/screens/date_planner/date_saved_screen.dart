@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 import '../../constants/mate_theme.dart';
+import '../../services/auth_service.dart';
 import 'date_models.dart';
 import 'date_planner_service.dart';
 import 'date_widgets.dart';
@@ -22,12 +23,16 @@ class _DateSavedScreenState extends State<DateSavedScreen> {
   @override
   void initState() {
     super.initState();
-    _future = DatePlannerService.instance.loadSavedPlans();
+    _future = DatePlannerService.instance.loadSavedPlans(
+      coupleId: AuthService.instance.coupleCode,
+    );
   }
 
   void _reload() {
     setState(() {
-      _future = DatePlannerService.instance.loadSavedPlans();
+      _future = DatePlannerService.instance.loadSavedPlans(
+        coupleId: AuthService.instance.coupleCode,
+      );
     });
   }
 
@@ -37,7 +42,7 @@ class _DateSavedScreenState extends State<DateSavedScreen> {
       builder: (_) => AlertDialog(
         backgroundColor: Colors.white,
         title: const Text('Xóa kế hoạch?'),
-        content: Text('"${plan.dateLabel}" sẽ bị xóa khỏi thiết bị.'),
+        content: Text('"${plan.dateLabel}" sẽ bị xóa.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -52,7 +57,10 @@ class _DateSavedScreenState extends State<DateSavedScreen> {
       ),
     );
     if (ok == true) {
-      await DatePlannerService.instance.deletePlan(plan.id);
+      await DatePlannerService.instance.deletePlan(
+        plan.id,
+        coupleId: AuthService.instance.coupleCode,
+      );
       _reload();
     }
   }

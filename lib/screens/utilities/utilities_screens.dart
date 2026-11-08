@@ -1,5 +1,10 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../constants/mate_theme.dart';
+import '../../services/wallet_service.dart';
+import '../../services/shop_service.dart';
+import '../../services/inventory_service.dart';
+import '../../services/daily_reward_service.dart';
 
 // =====================================================================
 // Shared header (gradient + nút Back + tiêu đề) cho mọi màn hình con.
@@ -588,32 +593,29 @@ class _SectionTitle2 extends StatelessWidget {
 // WalletScreen
 // =====================================================================
 //
-// Mock lịch sử giao dịch xu. Số dư thật sẽ tích hợp sau.
+// Kết nối realtime với Firestore qua WalletService:
+//   - Số dư: watchCoins(coupleId)
+//   - Lịch sử giao dịch: watchTransactions(coupleId)
 class WalletScreen extends StatelessWidget {
-  const WalletScreen({super.key});
+  final String? coupleId;
+  const WalletScreen({super.key, this.coupleId});
 
   @override
   Widget build(BuildContext context) {
-    final txs = [
-      _Tx('Nhận quà hằng ngày', '+20', 'green', Icons.card_giftcard_rounded),
-      _Tx('Mua trang phục Pet', '-150', 'red', Icons.shopping_bag_rounded),
-      _Tx('Thưởng đăng nhập 7 ngày', '+100', 'green', Icons.emoji_events_rounded),
-      _Tx('Lucky Box Premium', '-50', 'red', Icons.card_giftcard_rounded),
-      _Tx('Hoàn thành thử thách', '+30', 'green', Icons.check_circle_rounded),
-      _Tx('Mua đồ trang trí', '-80', 'red', Icons.chair_rounded),
-    ];
-
     return Scaffold(
       backgroundColor: const Color(0xFFFFEBF1),
       body: SafeArea(
         child: Column(
           children: [
-            const _SubHeader(title: 'Ví xu MATE', subtitle: 'Lịch sử giao dịch'),
+            const _SubHeader(
+              title: 'Ví xu MATE',
+              subtitle: 'Lịch sử giao dịch thời gian thực',
+            ),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 children: [
-                  // Số dư lớn.
+                  // Số dư lớn realtime
                   Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
@@ -630,23 +632,41 @@ class WalletScreen extends StatelessWidget {
                         const Icon(Icons.account_balance_wallet_rounded,
                             color: Colors.white, size: 32),
                         const SizedBox(width: 12),
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Số dư hiện tại',
+                              const Text('Số dư hiện tại',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
                                   )),
-                              SizedBox(height: 2),
-                              Text('1.250 xu',
+                              const SizedBox(height: 2),
+                              if (coupleId != null)
+                                StreamBuilder<int>(
+                                  stream: WalletService.instance.watchCoins(coupleId!),
+                                  builder: (context, snap) {
+                                    final coins = snap.data ?? 0;
+                                    return Text(
+                                      '$coins xu',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 26,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    );
+                                  },
+                                )
+                              else
+                                const Text(
+                                  '0 xu',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 26,
                                     fontWeight: FontWeight.w900,
-                                  )),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -656,20 +676,41 @@ class WalletScreen extends StatelessWidget {
                   const SizedBox(height: 16),
                   const _SectionTitle2('Giao dịch gần đây'),
                   const SizedBox(height: 8),
-                  ...txs.map((t) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _TxTile(tx: t),
-                      )),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Dữ liệu giao dịch hiện là mẫu minh họa. Sẽ được đồng bộ với tài khoản khi tích hợp.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: MateColors.plum.withOpacity(0.6),
-                      height: 1.4,
-                    ),
-                  ),
+                  if (coupleId != null)
+                    StreamBuilder<List<WalletTransaction>>(
+                      stream: WalletService.instance.watchTransactions(coupleId!),
+                      builder: (context, snap) {
+                        if (!snap.hasData) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: CircularProgressIndicator(color: MateColors.pink),
+                            ),
+                          );
+                        }
+                        final txs = snap.data!;
+                        if (txs.isEmpty) {
+                          return Container(
+                            padding: const EdgeInsets.all(24),
+                            alignment: Alignment.center,
+                            child: const Text(
+                              'Chưa có giao dịch nào',
+                              style: TextStyle(color: MateColors.rose, fontSize: 13),
+                            ),
+                          );
+                        }
+                        return Column(
+                          children: txs
+                              .map((t) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _TxTileReal(tx: t),
+                                  ))
+                              .toList(),
+                        );
+                      },
+                    )
+                  else
+                    const Center(child: Text('Chưa kết nối phòng')),
                 ],
               ),
             ),
@@ -680,21 +721,16 @@ class WalletScreen extends StatelessWidget {
   }
 }
 
-class _Tx {
-  final String label;
-  final String amount;
-  final String kind; // 'green' / 'red'
-  final IconData icon;
-  const _Tx(this.label, this.amount, this.kind, this.icon);
-}
-
-class _TxTile extends StatelessWidget {
-  final _Tx tx;
-  const _TxTile({required this.tx});
+class _TxTileReal extends StatelessWidget {
+  final WalletTransaction tx;
+  const _TxTileReal({required this.tx});
 
   @override
   Widget build(BuildContext context) {
-    final isPlus = tx.kind == 'green';
+    final isPlus = tx.isEarn;
+    final sign = isPlus ? '+' : '-';
+    final icon = isPlus ? Icons.arrow_downward_rounded : Icons.shopping_bag_rounded;
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -710,38 +746,44 @@ class _TxTile extends StatelessWidget {
             height: 40,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: isPlus
-                  ? const Color(0xFFDCFCE7)
-                  : const Color(0xFFFEE2E2),
+              color: isPlus ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
-              tx.icon,
-              color: isPlus
-                  ? const Color(0xFF22C55E)
-                  : const Color(0xFFEF4444),
+              icon,
+              color: isPlus ? const Color(0xFF22C55E) : const Color(0xFFEF4444),
               size: 20,
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              tx.label,
-              style: const TextStyle(
-                fontSize: 13.5,
-                fontWeight: FontWeight.w700,
-                color: MateColors.plum,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tx.reason,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: MateColors.plum,
+                  ),
+                ),
+                Text(
+                  '${tx.createdAt.hour.toString().padLeft(2, '0')}:${tx.createdAt.minute.toString().padLeft(2, '0')} - ${tx.createdAt.day}/${tx.createdAt.month}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: MateColors.rose,
+                  ),
+                ),
+              ],
             ),
           ),
           Text(
-            tx.amount,
+            '$sign${tx.amount}',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w900,
-              color: isPlus
-                  ? const Color(0xFF22C55E)
-                  : const Color(0xFFEF4444),
+              color: isPlus ? const Color(0xFF22C55E) : const Color(0xFFEF4444),
             ),
           ),
         ],
@@ -754,13 +796,15 @@ class _TxTile extends StatelessWidget {
 // ItemShopScreen
 // =====================================================================
 //
-// Grid 2 cột các vật phẩm. Dùng gradient làm thumbnail (không cần asset).
+// Kết nối realtime với Firestore qua ShopService:
+//   - Đọc shopItems collection
+//   - Mua vật phẩm qua ShopService.purchaseItem (trừ xu + thêm inventory)
 class ItemShopScreen extends StatelessWidget {
-  const ItemShopScreen({super.key});
+  final String? coupleId;
+  const ItemShopScreen({super.key, this.coupleId});
 
   @override
   Widget build(BuildContext context) {
-    final items = _mockShopItems;
     return Scaffold(
       backgroundColor: const Color(0xFFFFEBF1),
       body: SafeArea(
@@ -771,17 +815,39 @@ class ItemShopScreen extends StatelessWidget {
               subtitle: 'Trang phục, phụ kiện và đồ trang trí cho cặp đôi',
             ),
             Expanded(
-              child: GridView.builder(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                itemCount: items.length,
-                gridDelegate:
-                    const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: 0.72,
-                ),
-                itemBuilder: (_, i) => _ShopItemCard(item: items[i]),
+              child: StreamBuilder<List<ShopItem>>(
+                stream: ShopService.instance.watchItems(),
+                builder: (context, snap) {
+                  if (snap.hasError) {
+                    return Center(child: Text('Lỗi: ${snap.error}'));
+                  }
+                  if (!snap.hasData) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: MateColors.pink),
+                    );
+                  }
+                  final items = snap.data!;
+                  if (items.isEmpty) {
+                    return const Center(
+                      child: Text('Cửa hàng đang chuẩn bị cập nhật...'),
+                    );
+                  }
+
+                  return GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                    itemCount: items.length,
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 0.72,
+                    ),
+                    itemBuilder: (_, i) => _ShopItemCardReal(
+                      item: items[i],
+                      onTap: () => _confirmPurchase(context, items[i]),
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -789,102 +855,72 @@ class ItemShopScreen extends StatelessWidget {
       ),
     );
   }
-}
 
-class _ShopItem {
-  final String name;
-  final String category;
-  final int coins;
-  final String rarity; // Thường / Hiếm / Giới hạn
-  final IconData icon;
-  final List<Color> gradient;
-  const _ShopItem({
-    required this.name,
-    required this.category,
-    required this.coins,
-    required this.rarity,
-    required this.icon,
-    required this.gradient,
-  });
-}
+  void _confirmPurchase(BuildContext context, ShopItem item) async {
+    if (coupleId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chưa kết nối phòng')),
+      );
+      return;
+    }
 
-const _mockShopItems = [
-  _ShopItem(
-    name: 'Áo trái tim 💕',
-    category: 'Trang phục Pet',
-    coins: 120,
-    rarity: 'Thường',
-    icon: Icons.favorite_rounded,
-    gradient: [Color(0xFFFFB1CB), Color(0xFFFFD8E4)],
-  ),
-  _ShopItem(
-    name: 'Mũ phi hành gia',
-    category: 'Phụ kiện Pet',
-    coins: 250,
-    rarity: 'Hiếm',
-    icon: Icons.rocket_launch_rounded,
-    gradient: [Color(0xFFBAE6FD), Color(0xFFE0F2FE)],
-  ),
-  _ShopItem(
-    name: 'Đèn lồng mùa thu',
-    category: 'Đồ trang trí',
-    coins: 180,
-    rarity: 'Hiếm',
-    icon: Icons.lightbulb_rounded,
-    gradient: [Color(0xFFFEF9C3), Color(0xFFFDE68A)],
-  ),
-  _ShopItem(
-    name: 'Bộ sưu tập Noel',
-    category: 'Giới hạn mùa',
-    coins: 480,
-    rarity: 'Giới hạn',
-    icon: Icons.ac_unit_rounded,
-    gradient: [Color(0xFFA5F3FC), Color(0xFFE0F2FE)],
-  ),
-  _ShopItem(
-    name: 'Kẹo bông hồng',
-    category: 'Trang phục Pet',
-    coins: 90,
-    rarity: 'Thường',
-    icon: Icons.icecream_rounded,
-    gradient: [Color(0xFFFBCFE8), Color(0xFFFCE7F3)],
-  ),
-  _ShopItem(
-    name: 'Bong bóng trái tim',
-    category: 'Phụ kiện Pet',
-    coins: 200,
-    rarity: 'Hiếm',
-    icon: Icons.bubble_chart_rounded,
-    gradient: [Color(0xFFF3E8FF), Color(0xFFFCE7F3)],
-  ),
-];
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Xác nhận mua', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Text('Bạn có muốn mua "${item.name}" với giá ${item.coins} xu MATE?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Mua ngay'),
+          ),
+        ],
+      ),
+    );
 
-class _ShopItemCard extends StatelessWidget {
-  final _ShopItem item;
-  const _ShopItemCard({required this.item});
-
-  Color get _rarityColor {
-    switch (item.rarity) {
-      case 'Hiếm':
-        return const Color(0xFF9333EA);
-      case 'Giới hạn':
-        return const Color(0xFFE11D48);
-      default:
-        return const Color(0xFF6B7280);
+    if (confirm == true && context.mounted) {
+      try {
+        await ShopService.instance.purchaseItem(coupleId!, item);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('🎉 Mua thành công "${item.name}"! Vật phẩm đã vào Kho đồ.'),
+              backgroundColor: MateColors.pink,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Lỗi: $e'),
+              backgroundColor: MateColors.rose,
+            ),
+          );
+        }
+      }
     }
   }
+}
+
+class _ShopItemCardReal extends StatelessWidget {
+  final ShopItem item;
+  final VoidCallback onTap;
+  const _ShopItemCardReal({required this.item, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final gradient = _getItemGradient(item.category, item.rarity);
+    final icon = _getIconData(item.icon);
+    final rarityColor = _getRarityColor(item.rarity);
+
     return GestureDetector(
-      onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Xem chi tiết: ${item.name}'),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      },
+      onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: Container(
         decoration: BoxDecoration(
@@ -896,20 +932,19 @@ class _ShopItemCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Thumbnail gradient + icon
             Container(
               height: 110,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: item.gradient,
+                  colors: gradient,
                 ),
                 borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(MateRadius.card)),
               ),
               alignment: Alignment.center,
-              child: Icon(item.icon, size: 44, color: Colors.white),
+              child: Icon(icon, size: 44, color: Colors.white),
             ),
             Padding(
               padding: const EdgeInsets.all(10),
@@ -944,13 +979,13 @@ class _ShopItemCard extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: _rarityColor.withOpacity(0.12),
+                          color: rarityColor.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           item.rarity,
                           style: TextStyle(
-                            color: _rarityColor,
+                            color: rarityColor,
                             fontSize: 10,
                             fontWeight: FontWeight.w800,
                           ),
@@ -983,15 +1018,61 @@ class _ShopItemCard extends StatelessWidget {
 // =====================================================================
 // LuckyBoxScreen
 // =====================================================================
+//
+// Mở hộp quà nhận xu MATE realtime, ghi nhận vào WalletService
 class LuckyBoxScreen extends StatefulWidget {
-  const LuckyBoxScreen({super.key});
+  final String? coupleId;
+  const LuckyBoxScreen({super.key, this.coupleId});
   @override
   State<LuckyBoxScreen> createState() => _LuckyBoxScreenState();
 }
 
 class _LuckyBoxScreenState extends State<LuckyBoxScreen> {
-  // 0: chưa mở, 1: đã mở
   final List<bool> _opened = [false, false, false, false, false, false];
+  final Map<int, int> _rewards = {};
+  bool _isOpening = false;
+
+  Future<void> _openBox(int index, bool isPremium) async {
+    if (_opened[index] || _isOpening) return;
+    if (widget.coupleId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chưa kết nối phòng')),
+      );
+      return;
+    }
+
+    setState(() => _isOpening = true);
+    final random = Random();
+    final coins = isPremium ? (50 + random.nextInt(151)) : (10 + random.nextInt(21));
+
+    try {
+      await WalletService.instance.earnCoins(
+        widget.coupleId!,
+        coins,
+        'Mở Lucky Box ${isPremium ? "Premium" : "Thường"}',
+      );
+      setState(() {
+        _opened[index] = true;
+        _rewards[index] = coins;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🎁 Chúc mừng! Bạn nhận được $coins xu MATE!'),
+            backgroundColor: MateColors.pink,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi: $e'), backgroundColor: MateColors.rose),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isOpening = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1003,14 +1084,13 @@ class _LuckyBoxScreenState extends State<LuckyBoxScreen> {
           children: [
             const _SubHeader(
               title: 'Lucky Box 🎁',
-              subtitle: 'Mở hộp quà may mắn mỗi ngày',
+              subtitle: 'Mở hộp quà may mắn nhận xu mỗi ngày',
             ),
             Expanded(
               child: GridView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 itemCount: boxes.length,
-                gridDelegate:
-                    const SliverGridDelegateWithFixedCrossAxisCount(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   mainAxisSpacing: 12,
                   crossAxisSpacing: 12,
@@ -1019,16 +1099,15 @@ class _LuckyBoxScreenState extends State<LuckyBoxScreen> {
                 itemBuilder: (_, i) {
                   final isPremium = i % 2 == 0;
                   final opened = _opened[i];
+                  final reward = _rewards[i];
                   return _BoxCard(
                     title: isPremium ? 'Hộp Premium' : 'Hộp thường',
-                    sub: isPremium ? '50 – 200 xu' : '10 – 30 xu',
+                    sub: opened ? '+$reward xu' : (isPremium ? '50 – 200 xu' : '10 – 30 xu'),
                     gradient: isPremium
                         ? const [Color(0xFFFF3B69), Color(0xFFFF8FB1)]
                         : const [Color(0xFFBAE6FD), Color(0xFFE0F2FE)],
                     opened: opened,
-                    onTap: opened
-                        ? null
-                        : () => setState(() => _opened[i] = true),
+                    onTap: opened || _isOpening ? null : () => _openBox(i, isPremium),
                   );
                 },
               ),
@@ -1080,29 +1159,20 @@ class _BoxCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Icon(
-                  opened
-                      ? Icons.check_rounded
-                      : Icons.card_giftcard_rounded,
-                  color: opened
-                      ? const Color(0xFF22C55E)
-                      : Colors.white,
+                  opened ? Icons.check_rounded : Icons.card_giftcard_rounded,
+                  color: opened ? const Color(0xFF22C55E) : Colors.white,
                   size: 28,
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: opened
-                        ? Colors.white
-                        : Colors.white.withOpacity(0.25),
+                    color: opened ? Colors.white : Colors.white.withOpacity(0.25),
                     borderRadius: BorderRadius.circular(MateRadius.pill),
                   ),
                   child: Text(
                     opened ? 'Đã nhận' : 'Mở',
                     style: TextStyle(
-                      color: opened
-                          ? const Color(0xFF22C55E)
-                          : Colors.white,
+                      color: opened ? const Color(0xFF22C55E) : Colors.white,
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
                     ),
@@ -1126,9 +1196,7 @@ class _BoxCard extends StatelessWidget {
                 Text(
                   sub,
                   style: TextStyle(
-                    color: opened
-                        ? MateColors.plum.withOpacity(0.65)
-                        : Colors.white,
+                    color: opened ? MateColors.plum.withOpacity(0.65) : Colors.white,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1146,16 +1214,74 @@ class _BoxCard extends StatelessWidget {
 // DailyRewardsScreen
 // =====================================================================
 //
-// 7-day streak + 1 ô hôm nay. Phân biệt Free / Premium.
+// Kết nối với Firestore qua DailyRewardService (streak + claims)
 class DailyRewardsScreen extends StatefulWidget {
-  const DailyRewardsScreen({super.key});
+  final String? coupleId;
+  const DailyRewardsScreen({super.key, this.coupleId});
   @override
   State<DailyRewardsScreen> createState() => _DailyRewardsScreenState();
 }
 
 class _DailyRewardsScreenState extends State<DailyRewardsScreen> {
-  int _streak = 4; // ngày hiện tại trong chuỗi
+  int _streak = 0;
   bool _claimedToday = false;
+  bool _isLoading = true;
+  bool _isClaiming = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadState();
+  }
+
+  Future<void> _loadState() async {
+    if (widget.coupleId == null) {
+      setState(() => _isLoading = false);
+      return;
+    }
+    try {
+      final claimed = await DailyRewardService.instance.hasClaimedToday(widget.coupleId!);
+      final streak = await DailyRewardService.instance.getCurrentStreak(widget.coupleId!);
+      if (mounted) {
+        setState(() {
+          _claimedToday = claimed;
+          _streak = streak;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _claimReward() async {
+    if (_claimedToday || _isClaiming || widget.coupleId == null) return;
+    setState(() => _isClaiming = true);
+    try {
+      final coins = await DailyRewardService.instance.claimDailyReward(widget.coupleId!);
+      final newStreak = await DailyRewardService.instance.getCurrentStreak(widget.coupleId!);
+      if (mounted) {
+        setState(() {
+          _claimedToday = true;
+          _streak = newStreak;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🎉 Nhận thành công $coins xu MATE! Chuỗi: $_streak ngày.'),
+            backgroundColor: MateColors.pink,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi: $e'), backgroundColor: MateColors.rose),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isClaiming = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1179,104 +1305,107 @@ class _DailyRewardsScreenState extends State<DailyRewardsScreen> {
               subtitle: 'Đăng nhập mỗi ngày để nhận xu thưởng',
             ),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                children: [
-                  // Chuỗi 7 ngày
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(MateRadius.card),
-                      border: Border.all(color: MateColors.border),
-                      boxShadow: MateShadows.soft,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator(color: MateColors.pink))
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                       children: [
-                        const Text('Chuỗi đăng nhập',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                              color: MateColors.plum,
-                            )),
-                        const SizedBox(height: 12),
+                        // Chuỗi 7 ngày
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(MateRadius.card),
+                            border: Border.all(color: MateColors.border),
+                            boxShadow: MateShadows.soft,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Chuỗi đăng nhập hiện tại: $_streak ngày',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w800,
+                                    color: MateColors.plum,
+                                  )),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                height: 84,
+                                child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: rewards.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(width: 8),
+                                  itemBuilder: (_, i) {
+                                    final dayIndex = i + 1;
+                                    final claimed = dayIndex <= _streak;
+                                    final today = dayIndex == _streak + 1 && !_claimedToday;
+                                    return _DayChip(
+                                      label: rewards[i].$1,
+                                      coins: rewards[i].$2,
+                                      claimed: claimed,
+                                      today: today,
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+
+                        // Quyền lợi Free vs Premium
+                        const _SectionTitle2('Quyền lợi theo ngày'),
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(MateRadius.card),
+                            border: Border.all(color: MateColors.border),
+                            boxShadow: MateShadows.soft,
+                          ),
+                          child: const Column(
+                            children: [
+                              _RewardRow('Free', '20 – 300 xu / ngày'),
+                              Divider(color: MateColors.border, height: 18),
+                              _RewardRow('Premium', 'x2 xu thưởng hằng ngày',
+                                  highlight: true),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
                         SizedBox(
-                          height: 84,
-                          child: ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: rewards.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(width: 8),
-                            itemBuilder: (_, i) {
-                              final claimed = i < _streak;
-                              final today = i == _streak;
-                              return _DayChip(
-                                label: rewards[i].$1,
-                                coins: rewards[i].$2,
-                                claimed: claimed,
-                                today: today,
-                              );
-                            },
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _claimedToday || _isClaiming
+                                ? null
+                                : _claimReward,
+                            icon: Icon(
+                                _claimedToday
+                                    ? Icons.check_rounded
+                                    : Icons.card_giftcard_rounded,
+                                size: 18),
+                            label: Text(_claimedToday
+                                ? 'Đã nhận hôm nay'
+                                : (_isClaiming ? 'Đang nhận...' : 'Nhận quà hôm nay')),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _claimedToday
+                                  ? MateColors.subtlePink
+                                  : MateColors.pink,
+                              foregroundColor: _claimedToday
+                                  ? MateColors.rose
+                                  : Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(MateRadius.pill),
+                              ),
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 14),
-
-                  // Quyền lợi Free vs Premium
-                  const _SectionTitle2('Quyền lợi theo ngày'),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(MateRadius.card),
-                      border: Border.all(color: MateColors.border),
-                      boxShadow: MateShadows.soft,
-                    ),
-                    child: Column(
-                      children: const [
-                        _RewardRow('Free', '20 – 80 xu / ngày'),
-                        Divider(color: MateColors.border, height: 18),
-                        _RewardRow('Premium', '50 – 200 xu / ngày',
-                            highlight: true),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _claimedToday
-                          ? null
-                          : () => setState(() => _claimedToday = true),
-                      icon: Icon(
-                          _claimedToday
-                              ? Icons.check_rounded
-                              : Icons.card_giftcard_rounded,
-                          size: 18),
-                      label: Text(_claimedToday
-                          ? 'Đã nhận hôm nay'
-                          : 'Nhận quà hôm nay'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _claimedToday
-                            ? MateColors.subtlePink
-                            : MateColors.pink,
-                        foregroundColor: _claimedToday
-                            ? MateColors.rose
-                            : Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(MateRadius.pill),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
           ],
         ),
@@ -1375,9 +1504,7 @@ class _RewardRow extends StatelessWidget {
           width: 78,
           padding: const EdgeInsets.symmetric(vertical: 4),
           decoration: BoxDecoration(
-            color: highlight
-                ? MateColors.pink
-                : MateColors.subtlePink,
+            color: highlight ? MateColors.pink : MateColors.subtlePink,
             borderRadius: BorderRadius.circular(MateRadius.pill),
           ),
           alignment: Alignment.center,
@@ -1408,76 +1535,31 @@ class _RewardRow extends StatelessWidget {
 // InventoryScreen
 // =====================================================================
 //
-// Kho vật phẩm mock. Phân loại theo category. Toggle "Đang dùng".
+// Kết nối realtime với Firestore qua InventoryService:
+//   - Đọc couples/{coupleId}/inventory
+//   - Toggle đang dùng với toggleUse(coupleId, itemId)
 class InventoryScreen extends StatefulWidget {
-  const InventoryScreen({super.key});
+  final String? coupleId;
+  const InventoryScreen({super.key, this.coupleId});
   @override
   State<InventoryScreen> createState() => _InventoryScreenState();
 }
 
-class _InvItem {
-  final String name;
-  final String category;
-  final IconData icon;
-  final List<Color> gradient;
-  bool inUse;
-  _InvItem({
-    required this.name,
-    required this.category,
-    required this.icon,
-    required this.gradient,
-    this.inUse = false,
-  });
-}
-
 class _InventoryScreenState extends State<InventoryScreen> {
-  late final List<_InvItem> _items;
   String _filter = 'Tất cả';
 
-  @override
-  void initState() {
-    super.initState();
-    _items = [
-      _InvItem(
-        name: 'Áo trái tim',
-        category: 'Trang phục',
-        icon: Icons.favorite_rounded,
-        gradient: const [Color(0xFFFFB1CB), Color(0xFFFFD8E4)],
-        inUse: true,
-      ),
-      _InvItem(
-        name: 'Mũ phi hành gia',
-        category: 'Phụ kiện',
-        icon: Icons.rocket_launch_rounded,
-        gradient: const [Color(0xFFBAE6FD), Color(0xFFE0F2FE)],
-      ),
-      _InvItem(
-        name: 'Đèn lồng',
-        category: 'Đồ trang trí',
-        icon: Icons.lightbulb_rounded,
-        gradient: const [Color(0xFFFEF9C3), Color(0xFFFDE68A)],
-      ),
-      _InvItem(
-        name: 'Bong bóng trái tim',
-        category: 'Phụ kiện',
-        icon: Icons.bubble_chart_rounded,
-        gradient: const [Color(0xFFF3E8FF), Color(0xFFFCE7F3)],
-      ),
-      _InvItem(
-        name: 'Kẹo bông hồng',
-        category: 'Trang phục',
-        icon: Icons.icecream_rounded,
-        gradient: const [Color(0xFFFBCFE8), Color(0xFFFCE7F3)],
-      ),
-    ];
-  }
+  static const Map<String, List<String>> _filterCategories = {
+    'Tất cả': [],
+    'Trang phục': ['outfit', 'trang phục'],
+    'Phụ kiện': ['accessory', 'phụ kiện'],
+    'Đồ trang trí': ['decoration', 'đồ trang trí'],
+    'Thức ăn': ['food', 'thức ăn'],
+  };
 
   @override
   Widget build(BuildContext context) {
-    final cats = ['Tất cả', 'Trang phục', 'Phụ kiện', 'Đồ trang trí'];
-    final list = _filter == 'Tất cả'
-        ? _items
-        : _items.where((i) => i.category == _filter).toList();
+    final cats = _filterCategories.keys.toList();
+
     return Scaffold(
       backgroundColor: const Color(0xFFFFEBF1),
       body: SafeArea(
@@ -1485,7 +1567,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
           children: [
             const _SubHeader(
               title: 'Kho đồ',
-              subtitle: 'Vật phẩm bạn đang sở hữu',
+              subtitle: 'Vật phẩm cặp đôi đang sở hữu',
             ),
             // Filter chips
             SizedBox(
@@ -1505,23 +1587,16 @@ class _InventoryScreenState extends State<InventoryScreen> {
                           horizontal: 14, vertical: 8),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: selected
-                            ? MateColors.pink
-                            : Colors.white,
-                        borderRadius:
-                            BorderRadius.circular(MateRadius.pill),
+                        color: selected ? MateColors.pink : Colors.white,
+                        borderRadius: BorderRadius.circular(MateRadius.pill),
                         border: Border.all(
-                          color: selected
-                              ? MateColors.pink
-                              : MateColors.border,
+                          color: selected ? MateColors.pink : MateColors.border,
                         ),
                       ),
                       child: Text(
                         c,
                         style: TextStyle(
-                          color: selected
-                              ? Colors.white
-                              : MateColors.plum,
+                          color: selected ? Colors.white : MateColors.plum,
                           fontSize: 12,
                           fontWeight: FontWeight.w800,
                         ),
@@ -1533,25 +1608,59 @@ class _InventoryScreenState extends State<InventoryScreen> {
             ),
             const SizedBox(height: 4),
             Expanded(
-              child: list.isEmpty
-                  ? _empty()
-                  : ListView.builder(
-                      padding:
-                          const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                      itemCount: list.length,
-                      itemBuilder: (_, i) {
-                        final it = list[i];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: _InvTile(
-                            item: it,
-                            onUse: () => setState(() {
-                              for (final e in _items) {
-                                e.inUse = false;
-                              }
-                              it.inUse = !it.inUse;
-                            }),
-                          ),
+              child: widget.coupleId == null
+                  ? const Center(child: Text('Chưa kết nối phòng'))
+                  : StreamBuilder<List<InventoryItem>>(
+                      stream: InventoryService.instance.watchInventory(widget.coupleId!),
+                      builder: (context, snap) {
+                        if (!snap.hasData) {
+                          return const Center(
+                            child: CircularProgressIndicator(color: MateColors.pink),
+                          );
+                        }
+                        final allItems = snap.data!;
+                        final allowed = _filterCategories[_filter] ?? [];
+                        final list = allowed.isEmpty
+                            ? allItems
+                            : allItems.where((i) {
+                                final cat = i.category.toLowerCase();
+                                return allowed.any((a) => cat.contains(a));
+                              }).toList();
+
+                        if (list.isEmpty) {
+                          return _empty();
+                        }
+
+                        return ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                          itemCount: list.length,
+                          itemBuilder: (_, i) {
+                            final it = list[i];
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: _InvTileReal(
+                                item: it,
+                                onUse: () async {
+                                  try {
+                                    await InventoryService.instance.toggleUse(
+                                      widget.coupleId!,
+                                      it.id,
+                                      !it.inUse,
+                                    );
+                                  } catch (e) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Lỗi: $e'),
+                                          backgroundColor: MateColors.rose,
+                                        ),
+                                      );
+                                    }
+                                  }
+                                },
+                              ),
+                            );
+                          },
                         );
                       },
                     ),
@@ -1595,13 +1704,16 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 }
 
-class _InvTile extends StatelessWidget {
-  final _InvItem item;
+class _InvTileReal extends StatelessWidget {
+  final InventoryItem item;
   final VoidCallback onUse;
-  const _InvTile({required this.item, required this.onUse});
+  const _InvTileReal({required this.item, required this.onUse});
 
   @override
   Widget build(BuildContext context) {
+    final gradient = _getItemGradient(item.category, item.rarity);
+    final icon = _getIconData(item.icon);
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1622,12 +1734,12 @@ class _InvTile extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: item.gradient,
+                colors: gradient,
               ),
               borderRadius: BorderRadius.circular(14),
             ),
             alignment: Alignment.center,
-            child: Icon(item.icon, color: Colors.white, size: 26),
+            child: Icon(icon, color: Colors.white, size: 26),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1644,7 +1756,7 @@ class _InvTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  item.category,
+                  _formatCategory(item.category),
                   style: TextStyle(
                     fontSize: 12,
                     color: MateColors.plum.withOpacity(0.6),
@@ -1661,8 +1773,7 @@ class _InvTile extends StatelessWidget {
                 color: item.inUse ? MateColors.rose : MateColors.pink,
                 width: 1.2,
               ),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(MateRadius.pill),
               ),
@@ -1679,4 +1790,82 @@ class _InvTile extends StatelessWidget {
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+IconData _getIconData(String iconName) {
+  switch (iconName) {
+    case 'favorite':
+      return Icons.favorite_rounded;
+    case 'rocket':
+    case 'rocket_launch':
+      return Icons.rocket_launch_rounded;
+    case 'lightbulb':
+      return Icons.lightbulb_rounded;
+    case 'ac_unit':
+      return Icons.ac_unit_rounded;
+    case 'icecream':
+      return Icons.icecream_rounded;
+    case 'bubble_chart':
+      return Icons.bubble_chart_rounded;
+    case 'checkroom':
+      return Icons.checkroom_rounded;
+    case 'chair':
+      return Icons.chair_rounded;
+    case 'pets':
+      return Icons.pets_rounded;
+    default:
+      return Icons.card_giftcard_rounded;
+  }
+}
+
+Color _getRarityColor(String rarity) {
+  switch (rarity.toLowerCase()) {
+    case 'rare':
+    case 'hiếm':
+      return const Color(0xFF9333EA);
+    case 'legendary':
+    case 'epic':
+    case 'giới hạn':
+      return const Color(0xFFE11D48);
+    default:
+      return const Color(0xFF6B7280);
+  }
+}
+
+String _formatCategory(String cat) {
+  switch (cat.toLowerCase()) {
+    case 'outfit':
+      return 'Trang phục';
+    case 'accessory':
+      return 'Phụ kiện';
+    case 'decoration':
+      return 'Đồ trang trí';
+    case 'food':
+      return 'Thức ăn';
+    case 'limited':
+      return 'Giới hạn';
+    default:
+      return cat;
+  }
+}
+
+List<Color> _getItemGradient(String category, String rarity) {
+  if (rarity.toLowerCase().contains('giới hạn') ||
+      rarity.toLowerCase().contains('limited') ||
+      rarity.toLowerCase().contains('legendary')) {
+    return const [Color(0xFFA5F3FC), Color(0xFFE0F2FE)];
+  }
+  if (rarity.toLowerCase().contains('hiếm') ||
+      rarity.toLowerCase().contains('rare')) {
+    return const [Color(0xFFBAE6FD), Color(0xFFE0F2FE)];
+  }
+  if (category.toLowerCase().contains('trang phục') ||
+      category.toLowerCase().contains('outfit')) {
+    return const [Color(0xFFFFB1CB), Color(0xFFFFD8E4)];
+  }
+  return const [Color(0xFFFEF9C3), Color(0xFFFDE68A)];
 }

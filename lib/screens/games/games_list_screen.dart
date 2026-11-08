@@ -16,11 +16,10 @@ import 'game_screens.dart';
 // =============================================================
 
 class GamesListScreen extends StatelessWidget {
-  const GamesListScreen({super.key});
+  final String? coupleId;
+  const GamesListScreen({super.key, this.coupleId});
 
-  // Định nghĩa 4 game. Mỗi mục gồm icon, màu nền, mô tả, và một builder
-  // trả về widget nội dung game (dùng cho GameDetailScreen).
-  static final List<_GameItem> _games = [
+  List<_GameItem> _getGames(String? cId) => [
     _GameItem(
       title: 'Hiểu nhau bao nhiêu?',
       emoji: '💕',
@@ -28,7 +27,7 @@ class GamesListScreen extends StatelessWidget {
       bgColor: const Color(0xFFFCE7F3),
       iconColor: const Color(0xFFE11D48),
       description: 'Thử xem hai bạn hiểu nhau đến mức nào!',
-      builder: (_) => const QuizGame(),
+      builder: (_) => QuizGame(coupleId: cId),
     ),
     _GameItem(
       title: 'Caro tình yêu',
@@ -37,7 +36,7 @@ class GamesListScreen extends StatelessWidget {
       bgColor: const Color(0xFFF3E8FF),
       iconColor: const Color(0xFF9333EA),
       description: 'Cùng người ấy thử tài chiến thuật.',
-      builder: (_) => const TicTacToeGame(),
+      builder: (_) => TicTacToeGame(coupleId: cId),
     ),
     _GameItem(
       title: 'Đoán ý người yêu',
@@ -46,7 +45,7 @@ class GamesListScreen extends StatelessWidget {
       bgColor: const Color(0xFFE0F2FE),
       iconColor: const Color(0xFF0284C7),
       description: 'Hai người có đang nghĩ giống nhau?',
-      builder: (_) => const MindReadGame(),
+      builder: (_) => MindReadGame(coupleId: cId),
     ),
     _GameItem(
       title: 'Thử thách cặp đôi',
@@ -55,12 +54,13 @@ class GamesListScreen extends StatelessWidget {
       bgColor: const Color(0xFFFEF9C3),
       iconColor: const Color(0xFFD97706),
       description: 'Cùng nhau hoàn thành những thử thách thú vị.',
-      builder: (_) => const DailyChallengeGame(),
+      builder: (_) => DailyChallengeGame(coupleId: cId),
     ),
   ];
 
   @override
   Widget build(BuildContext context) {
+    final games = _getGames(coupleId);
     return Scaffold(
       backgroundColor: const Color(0xFFFFEBF1),
       body: SafeArea(
@@ -130,26 +130,26 @@ class GamesListScreen extends StatelessWidget {
                 delegate: SliverChildBuilderDelegate(
                   (context, i) => Padding(
                     padding: EdgeInsets.only(
-                      bottom: i == _games.length - 1 ? 0 : 12,
+                      bottom: i == games.length - 1 ? 0 : 12,
                     ),
                     child: _GameCard(
-                      item: _games[i],
+                      item: games[i],
                       onTap: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => GameDetailScreen(
-                              title: _games[i].title,
-                              emoji: _games[i].emoji,
-                              icon: _games[i].icon,
-                              iconColor: _games[i].iconColor,
-                              child: _games[i].builder(context),
+                              title: games[i].title,
+                              emoji: games[i].emoji,
+                              icon: games[i].icon,
+                              iconColor: games[i].iconColor,
+                              child: games[i].builder(context),
                             ),
                           ),
                         );
                       },
                     ),
                   ),
-                  childCount: _games.length,
+                  childCount: games.length,
                 ),
               ),
             ),

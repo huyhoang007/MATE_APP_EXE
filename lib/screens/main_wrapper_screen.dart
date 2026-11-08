@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../constants/mate_theme.dart';
 import '../models/couple_model.dart';
+import '../services/notification_service.dart';
 import 'tabs/map_tab.dart';
 import 'tabs/pet_tab.dart';
 import 'tabs/memories_tab.dart';
@@ -37,6 +38,13 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
   int _index = 0;
 
   @override
+  void initState() {
+    super.initState();
+    // Khởi tạo NotificationService stream cho couple này.
+    NotificationService.instance.init(widget.coupleId);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
@@ -59,7 +67,10 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
             daysTogether = DateTime.now().difference(start).inDays.clamp(0, 99999);
           }
         }
-        final coupleData = CoupleData.fromDoc(coupleDoc);
+        final coupleData = CoupleData.fromDoc(
+          coupleDoc,
+          currentUid: widget.currentUserId,
+        );
 
         final tabs = <Widget>[
           MapTab(
@@ -73,7 +84,11 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
               setState(() => _index = i);
             },
           ),
-          const PetTab(),
+          PetTab(
+            coupleId: widget.coupleId,
+            currentUserId: widget.currentUserId,
+            coupleData: coupleData,
+          ),
           MemoriesTab(
             coupleId: widget.coupleId,
             currentUserId: widget.currentUserId,
@@ -84,6 +99,9 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
           // Nhấn Back (trên Header hoặc Android system back) sẽ
           // quay về Tab 1 – Bản đồ.
           ChatTab(
+            coupleId: widget.coupleId,
+            currentUserId: widget.currentUserId,
+            coupleData: coupleData,
             onBack: () {
               if (!mounted) return;
               setState(() => _index = 0);

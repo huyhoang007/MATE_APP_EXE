@@ -6,6 +6,8 @@ import 'package:image_picker/image_picker.dart';
 import '../../constants/mate_theme.dart';
 import '../../models/couple_model.dart';
 import '../../widgets/vietqr_sheet.dart';
+import '../../services/diary_service.dart';
+import '../../services/auth_service.dart';
 
 /// ============================================================
 /// MemoriesTab - Tab 3: Khoảnh khắc & Album
@@ -244,7 +246,7 @@ class _CaptureViewState extends State<_CaptureView> {
                 onTap: () {
                   Navigator.pop(ctx);
                   _pickMedia(
-                    isVideo: true,
+                    isVideo: isVideo,
                     source: ImageSource.camera,
                   );
                 },
@@ -1078,7 +1080,7 @@ class _TimelineView extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           children: [
-            // ── 1. Nhật ký trong ngày (mock + Premium) ──
+            // ── 1. Nhật ký trong ngày (Firestore DiaryService) ──
             _DailyDiarySection(isPremium: isPremium, coupleId: coupleId),
 
             const SizedBox(height: 18),
@@ -1765,13 +1767,7 @@ String _timeAgo(DateTime dt) {
 }
 
 // =============================================================
-// Daily Diary (Nhật ký trong ngày) - Mock UI
-// =============================================================
-//
-// Trạng thái: chưa có backend tạo video, nên chỉ hiển thị UI mock.
-// Khi backend sẵn sàng, chỉ cần thay nguồn dữ liệu bên trong
-// `_DailyDiarySection` (Stream<DocumentSnapshot>) mà không phải
-// sửa widget.
+// Daily Diary (Nhật ký trong ngày) - Kết nối Firestore DiaryService
 // =============================================================
 
 class _DailyDiarySection extends StatelessWidget {
@@ -1779,95 +1775,118 @@ class _DailyDiarySection extends StatelessWidget {
   final String coupleId;
   const _DailyDiarySection({required this.isPremium, required this.coupleId});
 
+  static String _formatDateKey(DateTime dt) {
+    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+  }
+
+  static String _formatDisplayDate(String dateKey) {
+    final parts = dateKey.split('-');
+    if (parts.length == 3) {
+      return '${parts[2]}/${parts[1]}/${parts[0]}';
+    }
+    return dateKey;
+  }
+
+  static String _getMoodEmoji(String? mood) {
+    switch (mood) {
+      case 'love':
+        return '🥰';
+      case 'happy':
+        return '😊';
+      case 'sad':
+        return '😢';
+      case 'angry':
+        return '😤';
+      default:
+        return '💕';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Mock data tách biệt — không đụng backend.
-    final mockToday = _DiaryEntry(
-      date: DateTime.now(),
-      thumbnailEmoji: '💕',
-      title: 'Nhật ký hôm nay',
-      subtitle: '5 khoảnh khắc được ghi lại',
-      durationLabel: '00:48',
-      status: isPremium ? _DiaryStatus.processing : _DiaryStatus.locked,
-    );
+    final todayKey = _formatDateKey(DateTime.now());
 
-    final mockPast = <_DiaryEntry>[
-      _DiaryEntry(
-        date: DateTime.now().subtract(const Duration(days: 1)),
-        thumbnailEmoji: '🌅',
-        title: 'Ngày hôm qua',
-        subtitle: '3 khoảnh khắc',
-        durationLabel: '00:32',
-        status: isPremium ? _DiaryStatus.ready : _DiaryStatus.locked,
-      ),
-      _DiaryEntry(
-        date: DateTime.now().subtract(const Duration(days: 7)),
-        thumbnailEmoji: '🎂',
-        title: '7 ngày trước',
-        subtitle: '8 khoảnh khắc',
-        durationLabel: '01:12',
-        status: isPremium ? _DiaryStatus.ready : _DiaryStatus.locked,
-      ),
-    ];
+    return StreamBuilder<List<DiaryEntry>>(
+      stream: DiaryService.instance.watchDiaries(coupleId),
+      builder: (context, snapshot) {
+        final diaries = snapshot.data ?? [];
+        DiaryEntry? todayEntry;
+        for (final d in diaries) {
+          if (d.dateKey == todayKey) {
+            todayEntry = d;
+            break;
+          }
+        }
+        final pastEntries = diaries.where((d) => d.dateKey != todayKey).toList();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Card chính
-        _DiaryCard(
-          entry: mockToday,
-          isPremium: isPremium,
-          coupleId: coupleId,
-        ),
-        if (mockPast.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          // Danh sách các ngày trước
-          ...mockPast.map(
-            (e) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _DiaryCompactCard(entry: e, isPremium: isPremium),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Card nhật ký hôm nay
+            _TodayDiaryCard(
+              coupleId: coupleId,
+              todayKey: todayKey,
+              entry: todayEntry,
+              isPremium: isPremium,
             ),
-          ),
-        ],
-      ],
+
+            if (pastEntries.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  children: [
+                    const Text('📖', style: TextStyle(fontSize: 14)),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Nhật ký đã qua (${pastEntries.length})',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: MateColors.plum,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              ...pastEntries.take(5).map(
+                (e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _PastDiaryTile(
+                    coupleId: coupleId,
+                    entry: e,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
 
-enum _DiaryStatus { ready, processing, locked }
-
-class _DiaryEntry {
-  final DateTime date;
-  final String thumbnailEmoji;
-  final String title;
-  final String subtitle;
-  final String durationLabel;
-  final _DiaryStatus status;
-  const _DiaryEntry({
-    required this.date,
-    required this.thumbnailEmoji,
-    required this.title,
-    required this.subtitle,
-    required this.durationLabel,
-    required this.status,
-  });
-}
-
-class _DiaryCard extends StatelessWidget {
-  final _DiaryEntry entry;
-  final bool isPremium;
+class _TodayDiaryCard extends StatelessWidget {
   final String coupleId;
-  const _DiaryCard({
+  final String todayKey;
+  final DiaryEntry? entry;
+  final bool isPremium;
+
+  const _TodayDiaryCard({
+    required this.coupleId,
+    required this.todayKey,
     required this.entry,
     required this.isPremium,
-    required this.coupleId,
   });
 
   @override
   Widget build(BuildContext context) {
-    // `isLocked` / `isProcessing` đã được `_DiaryActionButton`
-    // và logic hành vi xử lý trực tiếp qua `entry.status` — không
-    // cần biến cục bộ.
+    final hasEntry = entry != null && entry!.text.trim().isNotEmpty;
+    final emoji = hasEntry
+        ? _DailyDiarySection._getMoodEmoji(entry!.mood)
+        : '✍️';
+
     return Container(
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -1881,42 +1900,16 @@ class _DiaryCard extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       child: Row(
         children: [
-          // Thumbnail
-          Stack(
-            children: [
-              Container(
-                width: 84,
-                height: 84,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: MateShadows.soft,
-                ),
-                alignment: Alignment.center,
-                child: Text(entry.thumbnailEmoji,
-                    style: const TextStyle(fontSize: 38)),
-              ),
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 5, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.55),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    entry.durationLabel,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.9),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: MateShadows.soft,
+            ),
+            alignment: Alignment.center,
+            child: Text(emoji, style: const TextStyle(fontSize: 34)),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1926,12 +1919,11 @@ class _DiaryCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Text('🎬',
-                        style: TextStyle(fontSize: 13)),
+                    const Text('🎬', style: TextStyle(fontSize: 13)),
                     const SizedBox(width: 4),
-                    Flexible(
-                      child: const Text(
-                        'Nhật ký trong ngày',
+                    const Flexible(
+                      child: Text(
+                        'Nhật ký hôm nay',
                         style: TextStyle(
                           color: MateColors.plum,
                           fontSize: 14,
@@ -1944,14 +1936,12 @@ class _DiaryCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 5, vertical: 1.5),
                       decoration: BoxDecoration(
-                        color: isPremium
-                            ? MateColors.online
-                            : MateColors.pinkDeep,
+                        color: MateColors.pinkDeep,
                         borderRadius: BorderRadius.circular(5),
                       ),
-                      child: Text(
-                        isPremium ? '⭐ PREMIUM' : '🔒 PRO',
-                        style: const TextStyle(
+                      child: const Text(
+                        'CLOUD',
+                        style: TextStyle(
                           color: Colors.white,
                           fontSize: 9,
                           fontWeight: FontWeight.w800,
@@ -1961,19 +1951,50 @@ class _DiaryCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
                 Text(
-                  entry.subtitle,
+                  hasEntry
+                      ? entry!.text
+                      : 'Cùng ghi lại cảm xúc và khoảnh khắc ngày hôm nay...',
                   style: TextStyle(
-                      color: MateColors.plum.withOpacity(0.75),
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600),
+                    color: MateColors.plum.withOpacity(0.8),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 8),
-                _DiaryActionButton(
-                  status: entry.status,
-                  isPremium: isPremium,
-                  onTap: () => _onAction(context),
+                GestureDetector(
+                  onTap: () => _openDiaryDialog(context),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: MateShadows.soft,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          hasEntry ? Icons.edit_note_rounded : Icons.add_rounded,
+                          size: 16,
+                          color: MateColors.pinkDeep,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          hasEntry ? 'Xem / Sửa nhật ký' : 'Viết nhật ký ngay',
+                          style: const TextStyle(
+                            color: MateColors.pinkDeep,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1983,133 +2004,51 @@ class _DiaryCard extends StatelessWidget {
     );
   }
 
-  void _onAction(BuildContext context) {
-    if (entry.status == _DiaryStatus.locked) {
-      // Mở VietQRSheet để nâng cấp Premium
-      showModalBottomSheet(
-        context: context,
-        backgroundColor: Colors.transparent,
-        isScrollControlled: true,
-        builder: (_) => VietQRSheet(coupleId: coupleId),
-      );
-      return;
-    }
-    if (entry.status == _DiaryStatus.processing) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Video kỷ niệm đang được tạo, vui lòng chờ...'),
-          backgroundColor: MateColors.pink,
-        ),
-      );
-      return;
-    }
-    // ready: mở trình xem
-    Navigator.of(context).push(MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => _DiaryViewer(entry: entry),
-    ));
-  }
-}
-
-class _DiaryActionButton extends StatelessWidget {
-  final _DiaryStatus status;
-  final bool isPremium;
-  final VoidCallback onTap;
-  const _DiaryActionButton({
-    required this.status,
-    required this.isPremium,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final locked = status == _DiaryStatus.locked;
-    final processing = status == _DiaryStatus.processing;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: locked
-              ? Colors.white
-              : (processing ? Colors.white : Colors.white),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: locked ? MateColors.border : Colors.white,
-            width: 1.2,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (processing) ...[
-              const SizedBox(
-                width: 12, height: 12,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.6, color: MateColors.pinkDeep,
-                ),
-              ),
-              const SizedBox(width: 6),
-              const Text('Đang tạo...',
-                  style: TextStyle(
-                      color: MateColors.plum,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800)),
-            ] else if (locked) ...[
-              const Icon(Icons.lock, size: 13, color: MateColors.pinkDeep),
-              const SizedBox(width: 4),
-              const Text('Nâng cấp',
-                  style: TextStyle(
-                      color: MateColors.pinkDeep,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800)),
-            ] else ...[
-              const Icon(Icons.play_arrow_rounded,
-                  size: 14, color: MateColors.pinkDeep),
-              const SizedBox(width: 4),
-              const Text('Xem video',
-                  style: TextStyle(
-                      color: MateColors.pinkDeep,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800)),
-            ]
-          ],
-        ),
+  void _openDiaryDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => _DiaryEditDialog(
+        coupleId: coupleId,
+        dateKey: todayKey,
+        initialText: entry?.text ?? '',
+        initialMood: entry?.mood ?? 'love',
       ),
     );
   }
 }
 
-class _DiaryCompactCard extends StatelessWidget {
-  final _DiaryEntry entry;
-  final bool isPremium;
-  const _DiaryCompactCard({required this.entry, required this.isPremium});
+class _PastDiaryTile extends StatelessWidget {
+  final String coupleId;
+  final DiaryEntry entry;
+
+  const _PastDiaryTile({
+    required this.coupleId,
+    required this.entry,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final locked = entry.status == _DiaryStatus.locked;
-    return GestureDetector(
+    final emoji = _DailyDiarySection._getMoodEmoji(entry.mood);
+    final dateStr = _DailyDiarySection._formatDisplayDate(entry.dateKey);
+
+    return InkWell(
       onTap: () {
-        if (locked) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Nâng cấp Premium để xem video kỷ niệm'),
-              backgroundColor: MateColors.pink,
-            ),
-          );
-        } else {
-          Navigator.of(context).push(MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (_) => _DiaryViewer(entry: entry),
-          ));
-        }
+        showDialog(
+          context: context,
+          builder: (_) => _DiaryEditDialog(
+            coupleId: coupleId,
+            dateKey: entry.dateKey,
+            initialText: entry.text,
+            initialMood: entry.mood ?? 'love',
+          ),
+        );
       },
+      borderRadius: BorderRadius.circular(16),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: MateColors.cardBg,
-          borderRadius: BorderRadius.circular(18),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: MateColors.border),
           boxShadow: MateShadows.soft,
         ),
@@ -2119,52 +2058,40 @@ class _DiaryCompactCard extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                gradient: locked
-                    ? null
-                    : const LinearGradient(
-                        colors: [Color(0xFFFFB1CB), Color(0xFFFFD8E4)],
-                      ),
-                color: locked ? MateColors.fieldBg : null,
-                shape: BoxShape.circle,
+                color: const Color(0xFFFCE7F3),
+                borderRadius: BorderRadius.circular(12),
               ),
               alignment: Alignment.center,
-              child: locked
-                  ? const Icon(Icons.lock, color: MateColors.rose, size: 18)
-                  : Text(entry.thumbnailEmoji,
-                      style: const TextStyle(fontSize: 22)),
+              child: Text(emoji, style: const TextStyle(fontSize: 22)),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(entry.title,
-                      style: const TextStyle(
-                        color: MateColors.plum,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
-                      )),
+                  Text(
+                    dateStr,
+                    style: const TextStyle(
+                      color: MateColors.plum,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                   const SizedBox(height: 2),
                   Text(
-                    '${entry.subtitle} · ${entry.durationLabel}',
+                    entry.text.isNotEmpty ? entry.text : '(Trống)',
                     style: TextStyle(
-                        color: MateColors.rose.withOpacity(0.85),
-                        fontSize: 11.5),
+                      color: MateColors.plum.withOpacity(0.65),
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
-            Icon(
-              locked
-                  ? Icons.lock_outline
-                  : (entry.status == _DiaryStatus.processing
-                      ? Icons.hourglass_top
-                      : Icons.play_circle_fill),
-              color: locked
-                  ? MateColors.rose
-                  : MateColors.pinkDeep,
-              size: 22,
-            ),
+            const Icon(Icons.arrow_forward_ios_rounded,
+                size: 14, color: MateColors.rose),
           ],
         ),
       ),
@@ -2172,49 +2099,263 @@ class _DiaryCompactCard extends StatelessWidget {
   }
 }
 
-class _DiaryViewer extends StatelessWidget {
-  final _DiaryEntry entry;
-  const _DiaryViewer({required this.entry});
+class _DiaryEditDialog extends StatefulWidget {
+  final String coupleId;
+  final String dateKey;
+  final String initialText;
+  final String initialMood;
+
+  const _DiaryEditDialog({
+    required this.coupleId,
+    required this.dateKey,
+    required this.initialText,
+    required this.initialMood,
+  });
+
+  @override
+  State<_DiaryEditDialog> createState() => _DiaryEditDialogState();
+}
+
+class _DiaryEditDialogState extends State<_DiaryEditDialog> {
+  late final TextEditingController _textCtrl;
+  late String _selectedMood;
+  bool _saving = false;
+
+  static const _moods = [
+    {'id': 'love', 'emoji': '🥰', 'label': 'Yêu thương'},
+    {'id': 'happy', 'emoji': '😊', 'label': 'Vui vẻ'},
+    {'id': 'neutral', 'emoji': '😐', 'label': 'Bình thường'},
+    {'id': 'sad', 'emoji': '😢', 'label': 'Buồn'},
+    {'id': 'angry', 'emoji': '😤', 'label': 'Bực mình'},
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _textCtrl = TextEditingController(text: widget.initialText);
+    _selectedMood = widget.initialMood;
+  }
+
+  @override
+  void dispose() {
+    _textCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final text = _textCtrl.text.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng nhập nội dung nhật ký.')),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      await DiaryService.instance.saveDiary(
+        widget.coupleId,
+        dateKey: widget.dateKey,
+        text: text,
+        mood: _selectedMood,
+      );
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đã lưu nhật ký vào đám mây 💕'),
+            backgroundColor: Color(0xFF22C55E),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi lưu nhật ký: $e'),
+            backgroundColor: const Color(0xFFEF4444),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _delete() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Xóa nhật ký?'),
+        content: const Text('Bạn có chắc muốn xóa nhật ký của ngày này không?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Xóa', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _saving = true);
+    try {
+      await DiaryService.instance.deleteDiary(widget.coupleId, widget.dateKey);
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã xóa nhật ký.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi xóa nhật ký: $e')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: Text('🎬 ${entry.title}',
-            style: const TextStyle(color: Colors.white, fontSize: 16)),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 240,
-              height: 240,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFFFB1CB), Color(0xFFFFD8E4)],
-                ),
-                borderRadius: BorderRadius.circular(24),
+    final dateDisplay = _DailyDiarySection._formatDisplayDate(widget.dateKey);
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Nhật ký $dateDisplay',
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: MateColors.plum,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
               ),
-              alignment: Alignment.center,
-              child: Text(entry.thumbnailEmoji,
-                  style: const TextStyle(fontSize: 100)),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Video kỷ niệm đang được tổng hợp',
-              style: TextStyle(color: Colors.white70, fontSize: 14),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Tính năng này sẽ sớm sẵn sàng',
-              style: TextStyle(
-                  color: Colors.white.withOpacity(0.5), fontSize: 12),
-            ),
-          ],
+              const SizedBox(height: 14),
+              const Text(
+                'Tâm trạng hôm nay:',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: MateColors.plum,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: _moods.map((m) {
+                  final isSelected = _selectedMood == m['id'];
+                  return GestureDetector(
+                    onTap: () => setState(() => _selectedMood = m['id'] as String),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isSelected ? const Color(0xFFFCE7F3) : Colors.transparent,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? MateColors.pinkDeep : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
+                      child: Text(m['emoji'] as String, style: const TextStyle(fontSize: 26)),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Cùng ghi lại cảm xúc:',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: MateColors.plum,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _textCtrl,
+                maxLines: 5,
+                decoration: InputDecoration(
+                  hintText: 'Hôm nay của hai bạn thế nào?...',
+                  hintStyle: TextStyle(color: MateColors.plum.withOpacity(0.4)),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: const BorderSide(color: MateColors.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: const BorderSide(color: MateColors.pink, width: 1.5),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  if (widget.initialText.isNotEmpty) ...[
+                    IconButton(
+                      onPressed: _saving ? null : _delete,
+                      icon: const Icon(Icons.delete_outline_rounded,
+                          color: Color(0xFFEF4444)),
+                      tooltip: 'Xóa nhật ký',
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: MateColors.pink,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(MateRadius.pill),
+                        ),
+                      ),
+                      onPressed: _saving ? null : _save,
+                      child: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text(
+                              'Lưu nhật ký',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w800, fontSize: 14),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

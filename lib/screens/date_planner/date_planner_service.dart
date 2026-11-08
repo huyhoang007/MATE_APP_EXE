@@ -2,12 +2,12 @@
 // DatePlannerService
 // =====================================================================
 //
-// - Lọc & sắp xếp mock data theo tiêu chí user.
-// - Lưu kế hoạch đã tạo vào SharedPreferences (đã có sẵn trong project).
-// - Không tạo backend mới.
+// - Lọc & sắp xếp dữ liệu địa điểm theo tiêu chí user.
+// - Lưu kế hoạch vào Firestore (couples/{coupleId}/datePlans) và SharedPreferences.
 // =====================================================================
 
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'date_models.dart';
 
@@ -30,8 +30,8 @@ class DatePlannerService {
     required TimeSlot slot,
   }) {
     // 1. Lọc theo khu vực: nếu user chọn "Tất cả" (area rỗng hoặc '*')
-    //    thì dùng toàn bộ mock data.
-    Iterable<DatePlace> pool = allMockPlaces.where((p) {
+    //    thì dùng toàn bộ danh mục địa điểm.
+    Iterable<DatePlace> pool = allFallbackPlaces.where((p) {
       if (area.isEmpty || area == 'Tất cả' || area == '*') return true;
       return p.area.toLowerCase().contains(area.toLowerCase());
     });
@@ -173,7 +173,7 @@ class DatePlannerService {
     required TimeSlot slot,
     required String area,
   }) {
-    final all = allMockPlaces.where((p) {
+    final all = allFallbackPlaces.where((p) {
       if (p.id == current.id) return false;
       if (p.category != current.category) return false;
       if (!budget.fits(p.pricePerTwo)) return false;
@@ -192,9 +192,39 @@ class DatePlannerService {
     return all;
   }
 
-  // ----- Persistence (lưu kế hoạch vào SharedPreferences) -----
+  // ----- Persistence (lưu kế hoạch vào Firestore & SharedPreferences) -----
 
-  Future<List<DatePlan>> loadSavedPlans() async {
+  Stream<List<DatePlan>> watchSavedPlans(String coupleId) {
+    return FirebaseFirestore.instance
+        .collection('couples')
+        .doc(coupleId)
+        .collection('datePlans')
+        .snapshots()
+        .map((snap) {
+      final list = snap.docs.map((d) => DatePlan.fromJson(d.data())).toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
+  }
+
+  Future<List<DatePlan>> loadSavedPlans({String? coupleId}) async {
+    if (coupleId != null && coupleId.isNotEmpty) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('couples')
+            .doc(coupleId)
+            .collection('datePlans')
+            .get();
+        if (snap.docs.isNotEmpty) {
+          final plans = snap.docs
+              .map((d) => DatePlan.fromJson(d.data()))
+              .toList();
+          plans.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          return plans;
+        }
+      } catch (_) {}
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_kSavedKey) ?? <String>[];
     final out = <DatePlan>[];
@@ -209,14 +239,33 @@ class DatePlannerService {
     return out;
   }
 
-  Future<void> savePlan(DatePlan plan) async {
+  Future<void> savePlan(DatePlan plan, {String? coupleId}) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_kSavedKey) ?? <String>[];
+    raw.removeWhere((s) {
+      try {
+        final j = jsonDecode(s) as Map<String, dynamic>;
+        return j['id'] == plan.id;
+      } catch (_) {
+        return false;
+      }
+    });
     raw.add(jsonEncode(plan.toJson()));
     await prefs.setStringList(_kSavedKey, raw);
+
+    if (coupleId != null && coupleId.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('couples')
+            .doc(coupleId)
+            .collection('datePlans')
+            .doc(plan.id)
+            .set(plan.toJson());
+      } catch (_) {}
+    }
   }
 
-  Future<void> deletePlan(String id) async {
+  Future<void> deletePlan(String id, {String? coupleId}) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_kSavedKey) ?? <String>[];
     raw.removeWhere((s) {
@@ -227,6 +276,17 @@ class DatePlannerService {
       }
     });
     await prefs.setStringList(_kSavedKey, raw);
+
+    if (coupleId != null && coupleId.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('couples')
+            .doc(coupleId)
+            .collection('datePlans')
+            .doc(id)
+            .delete();
+      } catch (_) {}
+    }
   }
 
   Future<void> clearAll() async {

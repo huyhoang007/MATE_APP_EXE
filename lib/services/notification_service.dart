@@ -1,65 +1,128 @@
 // ============================================================
-// NotificationService - Quản lý thông báo trong bộ nhớ.
+// NotificationService - Thông báo realtime qua Firestore.
 //
-// - Singleton, dùng ChangeNotifier để UI tự động rebuild khi
-//   có thay đổi (đánh dấu đã đọc, thêm mới...).
-// - Tách biệt với backend thật: dữ liệu hiện tại là MOCK.
-// - Khi có Firestore listener / push notification thật, chỉ
-//   cần thay thân hàm `_seedMock()` bằng stream từ backend.
+// Dữ liệu được lưu trữ và đồng bộ qua Firestore subcollection:
+//   couples/{coupleCode}/notifications/{notifId}
 //
-// Theo yêu cầu: KHÔNG giả lập realtime/push. Service chỉ giữ
-// state trong session, mất khi restart app.
+// API giữ nguyên tương thích ngược:
+//   - .all, .unread, .unreadCount
+//   - .markRead(id), .markAllRead(), .push(item)
+//   - .ensureSeeded() → no-op (backward compat)
+//
+// Thêm mới:
+//   - .init(coupleCode) → bắt đầu stream Firestore
+//   - .dispose() → hủy stream
 // ============================================================
 
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/notification_item.dart';
+import 'auth_service.dart';
 
 class NotificationService extends ChangeNotifier {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
 
-  final List<NotificationItem> _items = [];
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  static const Duration _timeout = Duration(seconds: 12);
 
-  /// Khởi tạo dữ liệu mẫu. An toàn gọi nhiều lần.
-  void ensureSeeded() {
-    if (_items.isNotEmpty) return;
-    _items.addAll(_seedMock());
-    // Sắp xếp mới nhất trước
-    _items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  final List<NotificationItem> _items = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sub;
+  String? _coupleCode;
+
+  /// Khởi tạo stream từ Firestore.
+  ///
+  /// Gọi 1 lần khi vào MainWrapperScreen (sau khi có coupleCode).
+  /// Idempotent — gọi lại với cùng code sẽ không tạo stream mới.
+  void init(String coupleCode) {
+    if (_coupleCode == coupleCode && _sub != null) return;
+
+    // Hủy stream cũ nếu có.
+    _sub?.cancel();
+    _coupleCode = coupleCode;
+
+    _sub = _db
+        .collection('couples')
+        .doc(coupleCode)
+        .collection('notifications')
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots()
+        .listen(
+      (snap) {
+        _items.clear();
+        for (final doc in snap.docs) {
+          _items.add(_fromFirestore(doc));
+        }
+        notifyListeners();
+      },
+      onError: (e) {
+        debugPrint('NotificationService stream error: $e');
+      },
+    );
   }
 
-  /// Reset state — chỉ dùng cho widget test. Trong production không
-  /// nên gọi vì mất dữ liệu người dùng đã đọc.
+  /// Backward compatibility.
+  /// Bây giờ là no-op vì dữ liệu đến từ Firestore stream.
+  void ensureSeeded() {
+    // no-op: dữ liệu realtime từ Firestore.
+  }
+
+  /// Reset — chỉ dùng cho widget test.
   @visibleForTesting
   void resetForTest() {
+    _sub?.cancel();
+    _sub = null;
+    _coupleCode = null;
     _items.clear();
-    ensureSeeded();
+    notifyListeners();
   }
+
+  // ---------- Getters (tương thích ngược) ----------
 
   /// Danh sách đã sắp xếp mới nhất trước.
-  List<NotificationItem> get all {
-    return List.unmodifiable(_items);
-  }
+  List<NotificationItem> get all => List.unmodifiable(_items);
 
   /// Lọc chưa đọc.
-  List<NotificationItem> get unread {
-    return _items.where((n) => !n.isRead).toList(growable: false);
-  }
+  List<NotificationItem> get unread =>
+      _items.where((n) => !n.isRead).toList(growable: false);
 
   int get unreadCount => _items.where((n) => !n.isRead).length;
 
+  // ---------- Actions ----------
+
   /// Đánh dấu 1 thông báo đã đọc.
   void markRead(String id) {
+    if (_coupleCode == null) return;
+
+    // Cập nhật local ngay (optimistic update).
     final idx = _items.indexWhere((n) => n.id == id);
-    if (idx == -1) return;
-    if (_items[idx].isRead) return;
-    _items[idx].isRead = true;
-    notifyListeners();
+    if (idx != -1 && !_items[idx].isRead) {
+      _items[idx].isRead = true;
+      notifyListeners();
+    }
+
+    // Cập nhật Firestore.
+    _db
+        .collection('couples')
+        .doc(_coupleCode!)
+        .collection('notifications')
+        .doc(id)
+        .update({
+      'isRead': true,
+      'readAt': FieldValue.serverTimestamp(),
+    }).timeout(_timeout).catchError((e) {
+      debugPrint('NotificationService markRead error: $e');
+    });
   }
 
   /// Đánh dấu tất cả đã đọc.
   void markAllRead() {
-    var changed = false;
+    if (_coupleCode == null) return;
+
+    // Optimistic update local.
+    bool changed = false;
     for (final n in _items) {
       if (!n.isRead) {
         n.isRead = true;
@@ -67,108 +130,154 @@ class NotificationService extends ChangeNotifier {
       }
     }
     if (changed) notifyListeners();
+
+    // Batch update Firestore.
+    _batchMarkAllRead();
   }
 
-  /// Thêm notification mới (dành cho tích hợp tương lai).
+  Future<void> _batchMarkAllRead() async {
+    try {
+      final snap = await _db
+          .collection('couples')
+          .doc(_coupleCode!)
+          .collection('notifications')
+          .where('isRead', isEqualTo: false)
+          .limit(100)
+          .get()
+          .timeout(_timeout);
+
+      if (snap.docs.isEmpty) return;
+
+      final batch = _db.batch();
+      for (final doc in snap.docs) {
+        batch.update(doc.reference, {
+          'isRead': true,
+          'readAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit().timeout(_timeout);
+    } catch (e) {
+      debugPrint('NotificationService markAllRead batch error: $e');
+    }
+  }
+
+  /// Thêm notification mới vào Firestore.
   void push(NotificationItem item) {
+    if (_coupleCode == null) return;
+
+    // Optimistic update local.
     _items.insert(0, item);
     notifyListeners();
+
+    // Ghi vào Firestore.
+    _db
+        .collection('couples')
+        .doc(_coupleCode!)
+        .collection('notifications')
+        .doc(item.id.startsWith('local_') ? null : item.id)
+        .set(_toFirestore(item))
+        .timeout(_timeout)
+        .catchError((e) {
+      debugPrint('NotificationService push error: $e');
+    });
   }
 
-  // ----------------------------------------------------------------
-  // Mock data — phủ 6 nhóm danh mục theo yêu cầu.
-  // ----------------------------------------------------------------
-  List<NotificationItem> _seedMock() {
-    final now = DateTime.now();
-    DateTime ago(int minutes) => now.subtract(Duration(minutes: minutes));
+  /// Gửi notification từ bên ngoài (vd: từ game, từ chat).
+  Future<void> sendNotification({
+    required String coupleCode,
+    required NotificationType type,
+    required String title,
+    required String message,
+    NotificationAction action = NotificationAction.none,
+    int? targetTabIndex,
+    String? targetRouteName,
+    Map<String, dynamic>? metadata,
+  }) async {
+    final uid = AuthService.instance.uid;
+    await _db
+        .collection('couples')
+        .doc(coupleCode)
+        .collection('notifications')
+        .doc()
+        .set({
+      'type': type.name,
+      'title': title,
+      'message': message,
+      'isRead': false,
+      'action': action.name,
+      if (targetTabIndex != null) 'targetTabIndex': targetTabIndex,
+      if (targetRouteName != null) 'targetRouteName': targetRouteName,
+      if (metadata != null) 'metadata': metadata,
+      'senderId': uid,
+      'createdAt': FieldValue.serverTimestamp(),
+    }).timeout(_timeout);
+  }
 
-    return [
-      // Cặp đôi
-      NotificationItem(
-        id: 'c1',
-        type: NotificationType.couple,
-        title: 'Người ấy gửi lời yêu thương 💕',
-        message: 'Một lời nhắn ngọt ngào vừa được gửi đến bạn.',
-        createdAt: ago(3),
-        targetTabIndex: 3, // Tab 4 - Nhắn tin
-        action: NotificationAction.switchTab,
+  /// Xóa 1 notification.
+  Future<void> deleteNotification(String id) async {
+    if (_coupleCode == null) return;
+
+    _items.removeWhere((n) => n.id == id);
+    notifyListeners();
+
+    await _db
+        .collection('couples')
+        .doc(_coupleCode!)
+        .collection('notifications')
+        .doc(id)
+        .delete()
+        .timeout(_timeout);
+  }
+
+  // ---------- Conversion ----------
+
+  NotificationItem _fromFirestore(
+      DocumentSnapshot<Map<String, dynamic>> snap) {
+    final d = snap.data() ?? {};
+    final typeStr = d['type'] as String? ?? 'system';
+    final actionStr = d['action'] as String? ?? 'none';
+
+    return NotificationItem(
+      id: snap.id,
+      type: NotificationType.values.firstWhere(
+        (t) => t.name == typeStr,
+        orElse: () => NotificationType.system,
       ),
-      // Khoảnh khắc
-      NotificationItem(
-        id: 'm1',
-        type: NotificationType.memory,
-        title: 'Người ấy vừa đăng khoảnh khắc mới',
-        message: 'Cùng xem kỷ niệm mới nhất của hai bạn nhé!',
-        createdAt: ago(28),
-        targetTabIndex: 2, // Tab 3 - Khoảnh khắc
-        action: NotificationAction.switchTab,
+      title: (d['title'] as String?) ?? '',
+      message: (d['message'] as String?) ?? '',
+      createdAt: (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      isRead: (d['isRead'] as bool?) ?? false,
+      action: NotificationAction.values.firstWhere(
+        (a) => a.name == actionStr,
+        orElse: () => NotificationAction.none,
       ),
-      // Phần thưởng
-      NotificationItem(
-        id: 'r1',
-        type: NotificationType.reward,
-        title: 'Quà hằng ngày đã sẵn sàng 🎁',
-        message: 'Điểm danh hôm nay để nhận xu MATE thưởng.',
-        createdAt: ago(95),
-        targetRouteName: 'dailyRewards',
-        action: NotificationAction.pushRoute,
-      ),
-      // Pet
-      NotificationItem(
-        id: 'p1',
-        type: NotificationType.pet,
-        title: 'Pet đang đợi được chăm sóc',
-        message: 'Bụng đói rồi — cho bé ăn nào!',
-        createdAt: ago(180),
-        targetTabIndex: 1, // Tab 2 - Pet
-        action: NotificationAction.switchTab,
-      ),
-      // Tin nhắn
-      NotificationItem(
-        id: 'msg1',
-        type: NotificationType.message,
-        title: 'Bạn có tin nhắn mới',
-        message: 'Người ấy vừa nhắn cho bạn trong cuộc trò chuyện.',
-        createdAt: ago(260),
-        targetTabIndex: 3, // Tab 4 - Nhắn tin
-        action: NotificationAction.switchTab,
-      ),
-      // Phần thưởng
-      NotificationItem(
-        id: 'r2',
-        type: NotificationType.reward,
-        title: 'Lucky Box có thể mở 🎉',
-        message: 'Bạn có một hộp quà may mắn đang chờ.',
-        createdAt: ago(420),
-        targetRouteName: 'luckyBox',
-        action: NotificationAction.pushRoute,
-      ),
-      // Cặp đôi - kỷ niệm
-      NotificationItem(
-        id: 'c2',
-        type: NotificationType.couple,
-        title: 'Sắp đến ngày kỷ niệm của hai bạn',
-        message: 'Chuẩn bị một điều bất ngờ cho người ấy thôi!',
-        createdAt: ago(720),
-      ),
-      // Pet level up
-      NotificationItem(
-        id: 'p2',
-        type: NotificationType.pet,
-        title: 'Pet đạt cấp độ mới 🐾',
-        message: 'Cấp độ của bé vừa tăng — ghé thăm bé ngay!',
-        createdAt: ago(1320),
-        targetTabIndex: 1,
-        action: NotificationAction.switchTab,
-      ),
-      // Hệ thống
-      NotificationItem(
-        id: 's1',
-        type: NotificationType.system,
-        title: 'MATE đã có bản cập nhật mới',
-        message: 'Trải nghiệm của bạn sẽ mượt mà hơn. Xem chi tiết trong Hồ sơ.',
-        createdAt: ago(2400),
-      ),
-    ];
+      targetTabIndex: (d['targetTabIndex'] as num?)?.toInt(),
+      targetRouteName: d['targetRouteName'] as String?,
+      metadata: d['metadata'] as Map<String, dynamic>?,
+    );
+  }
+
+  Map<String, dynamic> _toFirestore(NotificationItem item) {
+    return {
+      'type': item.type.name,
+      'title': item.title,
+      'message': item.message,
+      'isRead': item.isRead,
+      'action': item.action.name,
+      if (item.targetTabIndex != null) 'targetTabIndex': item.targetTabIndex,
+      if (item.targetRouteName != null) 'targetRouteName': item.targetRouteName,
+      if (item.metadata != null) 'metadata': item.metadata,
+      'senderId': AuthService.instance.uid,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+  }
+
+  // ---------- Lifecycle ----------
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _sub = null;
+    super.dispose();
   }
 }

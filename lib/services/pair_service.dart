@@ -4,21 +4,19 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 
-import 'user_id_service.dart';
+import 'auth_service.dart';
 
 /// ============================================================
-/// PairService - Dịch vụ ghép đôi thời gian thực qua Firestore
+/// PairService - Ghép đôi thời gian thực qua Firestore.
 ///
-/// LƯU Ý: KHÔNG dùng FirebaseAuth. Ứng dụng dùng userId thiết bị
-/// (lưu SharedPreferences) + Firestore Rules `allow read, write: if true;`.
+/// Dùng Firebase Anonymous Auth nên `request.auth.uid` là định danh
+/// ổn định của thiết bị. Mỗi cặp đôi có:
+///   couples/{code}                     -> document chính
+///   couples/{code}/members/{uid}       -> 2 thành viên (nguồn sự thật)
 ///
-/// Cấu trúc document `couples/{code}`:
-///   code: "ABC123"
-///   status: "waiting" | "paired"
-///   startDate: Timestamp
-///   user1: { name, isOnline, batteryLevel, lastActive, deviceId }
-///   user2: { name, isOnline, batteryLevel, lastActive, deviceId }
-///   pet:    { name, level, exp, hunger, happiness }
+/// Mã ghép đôi vẫn là 6 ký tự (A-Z, 2-9) để gửi qua Zalo/SMS cho
+/// người yêu. Người nhận mã nhập vào → UID của họ được ghi vào
+/// `members`, và họ tự động thấy cặp đôi trong `users/{uid}.coupleCode`.
 /// ============================================================
 
 enum PairStatus { waiting, paired, notFound, full }
@@ -39,15 +37,26 @@ class PairSession {
   final DateTime startDate;
   final String? partnerNickname;
 
+  /// UID của người tạo phòng.
+  final String? creatorUid;
+  /// UID của người tham gia (null nếu chưa có).
+  final String? partnerUid;
+  /// UID của chính user hiện tại (nếu đã là thành viên).
+  final String? myUid;
+
   const PairSession({
     required this.code,
     required this.status,
     required this.creatorNickname,
     required this.startDate,
     this.partnerNickname,
+    this.creatorUid,
+    this.partnerUid,
+    this.myUid,
   });
 
   bool get isPaired => status == PairStatus.paired;
+  bool get amIMember => myUid != null;
 }
 
 class PairService {
@@ -56,11 +65,10 @@ class PairService {
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   static const String _collection = 'couples';
+  static const String _membersSub = 'members';
   static const String _codeChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   static const int _codeLength = 6;
-
-  /// Timeout mặc định cho mọi call Firestore (tránh treo vô hạn).
-  static const Duration _callTimeout = Duration(seconds: 10);
+  static const Duration _callTimeout = Duration(seconds: 12);
 
   String _generateCode() {
     final rng = Random.secure();
@@ -72,11 +80,7 @@ class PairService {
 
   /// Chuẩn hoá mã người dùng nhập -> "ABC123" (uppercase, bỏ space/dash).
   String normalizeCode(String raw) {
-    final cleaned = raw
-        .toUpperCase()
-        .replaceAll(RegExp(r'[\s\-_]'), '')
-        .trim();
-    return cleaned;
+    return raw.toUpperCase().replaceAll(RegExp(r'[\s\-_]'), '').trim();
   }
 
   /// Validate mã 6 ký tự A-Z/2-9. Trả về null nếu OK, message lỗi nếu sai.
@@ -98,45 +102,62 @@ class PairService {
     required String nickname,
     required DateTime startDate,
   }) async {
-    final deviceId = await UserIdService.instance.getOrCreate();
+    final uid = await _requireUid();
     String? lastError;
+
+    if (AuthService.instance.isGuest) {
+      final code = _generateCode();
+      await AuthService.instance.linkCouple(code);
+      return code;
+    }
+
     for (int attempt = 0; attempt < 5; attempt++) {
       final code = _generateCode();
       try {
-        await _db
-            .collection(_collection)
-            .doc(code)
-            .set({
-              'code': code,
-              'status': 'waiting',
-              'createdAt': FieldValue.serverTimestamp(),
-              'startDate': Timestamp.fromDate(startDate),
-              'user1': {
-                'name': nickname,
-                'isOnline': true,
-                'batteryLevel': 100,
-                'lastActive': FieldValue.serverTimestamp(),
-                'deviceId': deviceId,
-              },
-              'user2': {
-                'name': 'Đang chờ...',
-                'isOnline': false,
-                'batteryLevel': 0,
-                'deviceId': null,
-              },
-              'pet': {
-                'name': 'Mochi',
-                'level': 1,
-                'exp': 0,
-                'hunger': 0.5,
-                'happiness': 0.5,
-              },
-            })
-            .timeout(_callTimeout);
+        final coupleRef = _db.collection(_collection).doc(code);
+
+        // Tạo document cặp đôi + doc thành viên của tôi.
+        await _db.runTransaction((txn) async {
+          await txn.set(coupleRef, {
+            'code': code,
+            'status': 'waiting',
+            'createdAt': FieldValue.serverTimestamp(),
+            'startDate': Timestamp.fromDate(startDate),
+            'isPremium': false,
+            'streakDays': 0,
+            'intimacyScore': 0,
+            'daysLoved': 0,
+            'coins': 100,
+            'members': {uid: {'name': nickname, 'joinedAt': FieldValue.serverTimestamp()}},
+            'creatorUid': uid,
+            'partnerUid': null,
+            'pet': {
+              'name': 'Mochi',
+              'level': 1,
+              'exp': 0,
+              'hunger': 0.5,
+              'happiness': 0.5,
+              'lastFed': null,
+              'lastPlayed': null,
+            },
+          });
+
+          await txn.set(coupleRef.collection(_membersSub).doc(uid), {
+            'uid': uid,
+            'name': nickname,
+            'role': 'creator',
+            'joinedAt': FieldValue.serverTimestamp(),
+            'isOnline': true,
+            'lastActive': FieldValue.serverTimestamp(),
+          });
+        }).timeout(_callTimeout);
+
+        // Ghi nhớ cặp đôi vào hồ sơ user → mở app lại vẫn vào đúng cặp.
+        await AuthService.instance.linkCouple(code);
+
         return code;
       } on FirebaseException catch (e) {
         lastError = e.message;
-        // Lỗi trùng document -> thử lại; các lỗi khác -> ném PairException.
         if (e.code != 'aborted' && e.code != 'already-exists') {
           throw _toPairException(e);
         }
@@ -159,6 +180,16 @@ class PairService {
   /// Stream lắng nghe thay đổi của 1 phòng theo mã.
   Stream<PairSession> watchRoom(String code) {
     final normalized = normalizeCode(code);
+    if (AuthService.instance.isGuest) {
+      return Stream.value(PairSession(
+        code: normalized,
+        status: PairStatus.waiting,
+        creatorNickname: AuthService.instance.nickname,
+        startDate: DateTime.now(),
+        creatorUid: AuthService.instance.uid,
+        myUid: AuthService.instance.uid,
+      ));
+    }
     final docRef = _db.collection(_collection).doc(normalized);
     return docRef.snapshots().map((snap) {
       if (!snap.exists) {
@@ -178,46 +209,78 @@ class PairService {
     required String code,
     required String partnerNickname,
   }) async {
-    // 1. Validate mã trước khi gọi Firestore.
     final validationError = validateCode(code);
     if (validationError != null) {
       throw PairException(validationError);
     }
     final normalized = normalizeCode(code);
+    final uid = await _requireUid();
 
-    final deviceId = await UserIdService.instance.getOrCreate();
-    final docRef = _db.collection(_collection).doc(normalized);
+    if (AuthService.instance.isGuest) {
+      await AuthService.instance.linkCouple(normalized);
+      return PairSession(
+        code: normalized,
+        status: PairStatus.paired,
+        creatorNickname: 'Đối tác',
+        startDate: DateTime.now(),
+        partnerNickname: partnerNickname,
+        creatorUid: 'guest_creator',
+        partnerUid: uid,
+        myUid: uid,
+      );
+    }
+
+    final coupleRef = _db.collection(_collection).doc(normalized);
+    final memberRef = coupleRef.collection(_membersSub).doc(uid);
 
     try {
-      // 2. Lấy document hiện tại với timeout.
-      final snap = await docRef.get(const GetOptions(source: Source.server))
-          .timeout(_callTimeout);
+      // Transaction: kiểm tra slot trống + ghi member atomically, tránh
+      // race condition khi cả 2 người cùng nhập mã.
+      await _db.runTransaction((txn) async {
+        final coupleSnap = await txn.get(coupleRef);
+        if (!coupleSnap.exists) {
+          throw const PairException('Mã không tồn tại. Vui lòng kiểm tra lại!');
+        }
 
-      if (!snap.exists) {
-        throw const PairException(
-          'Mã không tồn tại. Vui lòng kiểm tra lại!',
-        );
-      }
+        final memberSnap = await txn.get(memberRef);
+        if (memberSnap.exists) {
+          // Đã là thành viên → idempotent, coi như thành công.
+          return;
+        }
 
-      final data = snap.data()!;
-      final status = data['status'] as String?;
+        final members = coupleSnap.data()?['members'];
+        final memberCount = members is Map ? members.length : 0;
+        if (memberCount >= 2) {
+          throw const PairException('Phòng đã đủ 2 người rồi 🥺');
+        }
 
-      if (status == 'paired') {
-        throw const PairException('Phòng đã đủ 2 người rồi 🥺');
-      }
+        final creatorUid = coupleSnap.data()?['creatorUid'] as String?;
+        final partnerUid = creatorUid == uid ? null : creatorUid;
 
-      // 3. Update với timeout.
-      await docRef.update({
-        'status': 'paired',
-        'user2': {
+        await txn.set(memberRef, {
+          'uid': uid,
           'name': partnerNickname,
+          'role': 'joiner',
+          'joinedAt': FieldValue.serverTimestamp(),
           'isOnline': true,
-          'batteryLevel': 100,
           'lastActive': FieldValue.serverTimestamp(),
-          'deviceId': deviceId,
-        },
+        });
+
+        await txn.update(coupleRef, {
+          'status': 'paired',
+          'partnerUid': partnerUid,
+          'members.$uid': {
+            'name': partnerNickname,
+            'joinedAt': FieldValue.serverTimestamp(),
+          },
+          'daysLoved': 0,
+        });
       }).timeout(_callTimeout);
 
+      // Ghi nhớ cặp đôi vào hồ sơ user.
+      await AuthService.instance.linkCouple(normalized);
+
+      final snap = await coupleRef.get();
       return _toSession(normalized, snap);
     } on PairException {
       rethrow;
@@ -237,6 +300,24 @@ class PairService {
     }
   }
 
+  /// Lấy UID hiện tại, đảm bảo đã đăng nhập.
+  Future<String> _requireUid() async {
+    if (!AuthService.instance.isSignedIn) {
+      try {
+        await AuthService.instance.ensureSignedIn(force: true);
+      } catch (e) {
+        if (e is AuthException) {
+          throw PairException(e.message, cause: e);
+        }
+      }
+    }
+    final uid = AuthService.instance.uid;
+    if (uid == null) {
+      throw const PairException('Chưa đăng nhập. Vui lòng kiểm tra kết nối hoặc bật Anonymous Auth trên Firebase Console!');
+    }
+    return uid;
+  }
+
   PairSession _toSession(
     String code,
     DocumentSnapshot<Map<String, dynamic>> snap,
@@ -245,18 +326,43 @@ class PairService {
     final statusStr = data['status'] as String? ?? 'waiting';
     final status =
         statusStr == 'paired' ? PairStatus.paired : PairStatus.waiting;
-    final user1 = data['user1'] as Map<String, dynamic>? ?? {};
-    final user2 = data['user2'] as Map<String, dynamic>? ?? {};
+
+    final members = data['members'];
+    final creatorUid = data['creatorUid'] as String?;
+    final partnerUid = data['partnerUid'] as String?;
+
+    String? creatorName;
+    String? partnerName;
+    if (members is Map) {
+      for (final entry in members.entries) {
+        final uid = entry.key as String;
+        final name = (entry.value is Map)
+            ? ((entry.value as Map)['name'] as String?)
+            : null;
+        if (uid == creatorUid) {
+          creatorName = name;
+        } else if (uid == partnerUid) {
+          partnerName = name;
+        } else if (partnerName == null && uid != creatorUid) {
+          partnerName = name;
+        }
+      }
+    }
+
     final startTs = data['startDate'] as Timestamp?;
-    final partnerName = user2['name'] as String?;
+    final myUid = AuthService.instance.uid;
+
     return PairSession(
       code: code,
       status: status,
-      creatorNickname: (user1['name'] as String?) ?? '',
+      creatorNickname: creatorName ?? '',
       startDate: startTs?.toDate() ?? DateTime.now(),
-      partnerNickname: (partnerName != null && partnerName != 'Đang chờ...')
+      partnerNickname: (partnerName != null && partnerName.isNotEmpty)
           ? partnerName
           : null,
+      creatorUid: creatorUid,
+      partnerUid: partnerUid,
+      myUid: myUid,
     );
   }
 
@@ -265,11 +371,10 @@ class PairService {
   PairException _toPairException(Object e) {
     if (e is PairException) return e;
 
-    String raw = e.toString();
+    final raw = e.toString();
     String message;
 
     if (e is FirebaseException) {
-      // Một số mã lỗi thường gặp
       switch (e.code) {
         case 'permission-denied':
           message = 'Bạn không có quyền truy cập. Hãy kiểm tra Firestore Rules.';
@@ -296,7 +401,6 @@ class PairService {
     } else if (raw.contains('TimeoutException')) {
       message = 'Kết nối quá chậm. Vui lòng thử lại nhé 💕';
     } else if (raw.contains('authentication')) {
-      // Bắt riêng lỗi auth (App Check / token)
       message = 'Phiên xác thực hết hạn. Đang thử lại...';
     } else {
       message = 'Đã có lỗi xảy ra. Vui lòng thử lại!';

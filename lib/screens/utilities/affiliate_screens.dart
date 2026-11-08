@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../constants/mate_theme.dart';
+import '../../services/places_service.dart';
+import '../date_planner/date_models.dart';
 
 // =====================================================================
 // AffiliateCategory - mô tả 1 danh mục (Ăn uống / Đi chơi / ...)
@@ -120,6 +122,41 @@ class AffiliatePlace {
   });
 }
 
+AffiliatePlace _datePlaceToAffiliate(DatePlace p) {
+  IconData icon = Icons.place_rounded;
+  List<Color> grad = const [Color(0xFFEC4899), Color(0xFFF43F5E)];
+  switch (p.category) {
+    case DateCategory.eat:
+      icon = Icons.restaurant_rounded;
+      grad = const [Color(0xFFB45309), Color(0xFFFBBF24)];
+      break;
+    case DateCategory.movie:
+      icon = Icons.movie_rounded;
+      grad = const [Color(0xFF7C3AED), Color(0xFFA855F7)];
+      break;
+    case DateCategory.play:
+      icon = Icons.attractions_rounded;
+      grad = const [Color(0xFF0D9488), Color(0xFF14B8A6)];
+      break;
+    case DateCategory.outdoor:
+      icon = Icons.park_rounded;
+      grad = const [Color(0xFF15803D), Color(0xFF22C55E)];
+      break;
+    case DateCategory.gift:
+      icon = Icons.card_giftcard_rounded;
+      grad = const [Color(0xFFBE185D), Color(0xFFF472B6)];
+      break;
+  }
+  return AffiliatePlace(
+    name: p.name,
+    address: p.address,
+    priceRange: p.priceText,
+    icon: icon,
+    gradient: grad,
+    isPartner: p.isPartner,
+  );
+}
+
 class AffiliateListScreen extends StatefulWidget {
   final AffiliateCategory category;
   const AffiliateListScreen({super.key, required this.category});
@@ -135,101 +172,115 @@ class _AffiliateListScreenState extends State<AffiliateListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final all = _mockData(widget.category.id);
-    final filtered = all.where((p) {
-      if (_search.isNotEmpty &&
-          !p.name.toLowerCase().contains(_search.toLowerCase())) {
-        return false;
-      }
-      return true;
-    }).toList();
+    return StreamBuilder<List<DatePlace>>(
+      stream: PlacesService.instance.watchPlaces(),
+      builder: (context, snapshot) {
+        final places = snapshot.data ?? [];
+        final categoryPlaces = places
+            .where((p) => p.category.id == widget.category.id)
+            .map(_datePlaceToAffiliate)
+            .toList();
+        final all = categoryPlaces.isNotEmpty ? categoryPlaces : _fallbackPlaces(widget.category.id);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFFFEBF1),
-      body: SafeArea(
-        child: Column(
-          children: [
-            _SubHeader(
-              title: '${widget.category.emoji} ${widget.category.title}',
-              subtitle: widget.category.sub,
-            ),
-            // Search bar.
-            Padding(
-              padding:
-                  const EdgeInsets.fromLTRB(16, 6, 16, 8),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(MateRadius.field),
-                  border: Border.all(color: MateColors.border),
+        final filtered = all.where((p) {
+          if (_search.isNotEmpty &&
+              !p.name.toLowerCase().contains(_search.toLowerCase())) {
+            return false;
+          }
+          if (_area != 'Tất cả' &&
+              !p.address.toLowerCase().contains(_area.toLowerCase())) {
+            return false;
+          }
+          return true;
+        }).toList();
+
+        return Scaffold(
+          backgroundColor: const Color(0xFFFFEBF1),
+          body: SafeArea(
+            child: Column(
+              children: [
+                _SubHeader(
+                  title: '${widget.category.emoji} ${widget.category.title}',
+                  subtitle: widget.category.sub,
                 ),
-                child: TextField(
-                  onChanged: (v) => setState(() => _search = v),
-                  decoration: InputDecoration(
-                    hintText: 'Tìm kiếm địa điểm…',
-                    hintStyle: TextStyle(
-                      color: MateColors.plum.withOpacity(0.5),
-                      fontSize: 13.5,
+                // Search bar.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(MateRadius.field),
+                      border: Border.all(color: MateColors.border),
                     ),
-                    prefixIcon: const Icon(Icons.search_rounded,
-                        color: MateColors.rose),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 12),
-                  ),
-                ),
-              ),
-            ),
-            // Filter chips.
-            SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
-                  _filterChip('Khu vực', _area, [
-                    'Tất cả',
-                    'Quận 1',
-                    'Quận 3',
-                    'Quận 7',
-                  ], (v) => setState(() => _area = v)),
-                  const SizedBox(width: 8),
-                  _filterChip('Mức giá', _price, [
-                    'Tất cả',
-                    'Dưới 200K',
-                    '200K - 500K',
-                    'Trên 500K',
-                  ], (v) => setState(() => _price = v)),
-                ],
-              ),
-            ),
-            const SizedBox(height: 6),
-            Expanded(
-              child: filtered.isEmpty
-                  ? _empty()
-                  : ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-                      itemCount: filtered.length,
-                      itemBuilder: (_, i) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _PlaceCard(
-                          place: filtered[i],
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => AffiliateDetailScreen(
-                                  place: filtered[i],
-                                ),
-                              ),
-                            );
-                          },
+                    child: TextField(
+                      onChanged: (v) => setState(() => _search = v),
+                      decoration: InputDecoration(
+                        hintText: 'Tìm kiếm địa điểm…',
+                        hintStyle: TextStyle(
+                          color: MateColors.plum.withOpacity(0.5),
+                          fontSize: 13.5,
                         ),
+                        prefixIcon: const Icon(Icons.search_rounded,
+                            color: MateColors.rose),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 12),
                       ),
                     ),
+                  ),
+                ),
+                // Filter chips.
+                SizedBox(
+                  height: 40,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    children: [
+                      _filterChip('Khu vực', _area, [
+                        'Tất cả',
+                        'Quận 1',
+                        'Quận 3',
+                        'Quận 7',
+                      ], (v) => setState(() => _area = v)),
+                      const SizedBox(width: 8),
+                      _filterChip('Mức giá', _price, [
+                        'Tất cả',
+                        'Dưới 200K',
+                        '200K - 500K',
+                        'Trên 500K',
+                      ], (v) => setState(() => _price = v)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Expanded(
+                  child: filtered.isEmpty
+                      ? _empty()
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                          itemCount: filtered.length,
+                          itemBuilder: (_, i) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _PlaceCard(
+                              place: filtered[i],
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => AffiliateDetailScreen(
+                                      place: filtered[i],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -675,10 +726,10 @@ class _SectionTitle2 extends StatelessWidget {
 }
 
 // =====================================================================
-// Mock data theo category id.
+// Fallback data theo category id (khi Firestore places chưa seed).
 // =====================================================================
 
-List<AffiliatePlace> _mockData(String id) {
+List<AffiliatePlace> _fallbackPlaces(String id) {
   switch (id) {
     case 'eat':
       return [
